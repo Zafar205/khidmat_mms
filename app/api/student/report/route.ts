@@ -11,6 +11,7 @@ type AcademicRecord = {
   finalTerm: number;
   attendancePresent: number;
   attendanceTotal: number;
+
 };
 
 const toBoundedNumber = (value: unknown, min: number, max: number) => {
