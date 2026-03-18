@@ -252,6 +252,7 @@ export default function Home() {
   const [createUserError, setCreateUserError] = useState("");
   const [createUserMessage, setCreateUserMessage] = useState("");
   const [isCreateUserSubmitting, setIsCreateUserSubmitting] = useState(false);
+  const [createUserExpanded, setCreateUserExpanded] = useState(false);
 
   const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
   const [usersError, setUsersError] = useState("");
@@ -358,6 +359,10 @@ export default function Home() {
     if (adminSection === "students") {
       setNewUserRole("student");
     }
+  }, [adminSection]);
+
+  useEffect(() => {
+    setCreateUserExpanded(false);
   }, [adminSection]);
 
   const classAssignableStudents = useMemo(
@@ -1463,20 +1468,6 @@ export default function Home() {
 
           {!loadingStudentReport && studentReport ? (
             <>
-              <section className="mt-6 grid gap-4 md:grid-cols-2">
-                <div className="rounded-xl border border-[#632567]/40 bg-white p-4">
-                  <p className="text-xs uppercase tracking-wide text-[#632567]/75">Overall percentage</p>
-                  <p className="mt-2 text-3xl font-bold">{studentReport.student.overallPercent}%</p>
-                </div>
-                <div className="rounded-xl border border-[#632567]/40 bg-white p-4">
-                  <p className="text-xs uppercase tracking-wide text-[#632567]/75">Attendance percentage</p>
-                  <p className="mt-2 text-3xl font-bold">{studentReport.student.attendancePercent}%</p>
-                  <p className="mt-1 text-xs text-[#632567]/75">
-                    {studentReport.student.academic.attendancePresent} / {studentReport.student.academic.attendanceTotal} days
-                  </p>
-                </div>
-              </section>
-
               <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
                 <h2 className="text-xl font-semibold">Subject-wise Marks</h2>
                 <p className="mt-1 text-sm text-[#632567]/85">
@@ -1916,98 +1907,115 @@ export default function Home() {
         <section className="min-w-0 flex-1 space-y-6">
           {adminSection !== "classes" ? (
           <div className="rounded-xl border border-[#632567]/40 bg-white p-5">
-            <h2 className="text-xl font-semibold">Create User</h2>
-            <p className="mt-1 text-sm text-[#632567]/85">
-              Create teacher and student accounts with name, email, and password.
-            </p>
-
-            <form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={handleCreateUser}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <label className="mb-2 block text-sm text-[#632567]/85" htmlFor="new-user-name">
-                  Name
-                </label>
-                <input
-                  id="new-user-name"
-                  type="text"
-                  className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 outline-none focus:border-[#632567]"
-                  value={newUserName}
-                  onChange={(event) => setNewUserName(event.target.value)}
-                  required
-                />
+                <h2 className="text-xl font-semibold">Create User</h2>
+                <p className="mt-1 text-sm text-[#632567]/85">
+                  Create teacher and student accounts with name, email, and password.
+                </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setCreateUserExpanded((previous) => !previous)}
+                className="rounded-lg border border-[#632567]/50 px-4 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+              >
+                {createUserExpanded ? "Close" : "Add user"}
+              </button>
+            </div>
 
-              <div>
-                <label className="mb-2 block text-sm text-[#632567]/85" htmlFor="new-user-email">
-                  Email
-                </label>
-                <input
-                  id="new-user-email"
-                  type="email"
-                  className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 outline-none focus:border-[#632567]"
-                  value={newUserEmail}
-                  onChange={(event) => setNewUserEmail(event.target.value)}
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm text-[#632567]/85" htmlFor="new-user-password">
-                  Password
-                </label>
-                <input
-                  id="new-user-password"
-                  type="text"
-                  className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 outline-none focus:border-[#632567]"
-                  value={newUserPassword}
-                  onChange={(event) => setNewUserPassword(event.target.value)}
-                  minLength={6}
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm text-[#632567]/85" htmlFor="new-user-role">
-                  Role
-                </label>
-                <select
-                  id="new-user-role"
-                  className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 outline-none focus:border-[#632567]"
-                  value={newUserRole}
-                  onChange={(event) => setNewUserRole(event.target.value as ManagedRole)}
-                >
-                  <option value="teacher">Teacher</option>
-                  <option value="student">Student</option>
-                </select>
-              </div>
-
-              <div className="md:col-span-2">
-                {createUserError ? (
-                  <NotificationBanner
-                    message={createUserError}
-                    onClose={() => setCreateUserError("")}
-                    className=""
+            {createUserExpanded ? (
+              <form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={handleCreateUser}>
+                <div>
+                  <label className="mb-2 block text-sm text-[#632567]/85" htmlFor="new-user-name">
+                    Name
+                  </label>
+                  <input
+                    id="new-user-name"
+                    type="text"
+                    className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 outline-none focus:border-[#632567]"
+                    value={newUserName}
+                    onChange={(event) => setNewUserName(event.target.value)}
+                    required
                   />
-                ) : null}
+                </div>
 
-                {createUserMessage ? (
-                  <NotificationBanner
-                    message={createUserMessage}
-                    onClose={() => setCreateUserMessage("")}
-                    className=""
+                <div>
+                  <label className="mb-2 block text-sm text-[#632567]/85" htmlFor="new-user-email">
+                    Email
+                  </label>
+                  <input
+                    id="new-user-email"
+                    type="email"
+                    className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 outline-none focus:border-[#632567]"
+                    value={newUserEmail}
+                    onChange={(event) => setNewUserEmail(event.target.value)}
+                    required
                   />
-                ) : null}
-              </div>
+                </div>
 
-              <div className="md:col-span-2">
-                <button
-                  type="submit"
-                  disabled={isCreateUserSubmitting}
-                  className="w-full rounded-lg bg-[#632567] px-4 py-3 font-semibold text-white transition hover:bg-[#522053] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isCreateUserSubmitting ? "Creating account..." : "Create account"}
-                </button>
-              </div>
-            </form>
+                <div>
+                  <label className="mb-2 block text-sm text-[#632567]/85" htmlFor="new-user-password">
+                    Password
+                  </label>
+                  <input
+                    id="new-user-password"
+                    type="text"
+                    className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 outline-none focus:border-[#632567]"
+                    value={newUserPassword}
+                    onChange={(event) => setNewUserPassword(event.target.value)}
+                    minLength={6}
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm text-[#632567]/85" htmlFor="new-user-role">
+                    Role
+                  </label>
+                  <select
+                    id="new-user-role"
+                    className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 outline-none focus:border-[#632567]"
+                    value={newUserRole}
+                    onChange={(event) => setNewUserRole(event.target.value as ManagedRole)}
+                  >
+                    <option value="teacher">Teacher</option>
+                    <option value="student">Student</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  {createUserError ? (
+                    <NotificationBanner
+                      message={createUserError}
+                      onClose={() => setCreateUserError("")}
+                      className=""
+                    />
+                  ) : null}
+
+                  {createUserMessage ? (
+                    <NotificationBanner
+                      message={createUserMessage}
+                      onClose={() => setCreateUserMessage("")}
+                      className=""
+                    />
+                  ) : null}
+                </div>
+
+                <div className="md:col-span-2">
+                  <button
+                    type="submit"
+                    disabled={isCreateUserSubmitting}
+                    className="w-full rounded-lg bg-[#632567] px-4 py-3 font-semibold text-white transition hover:bg-[#522053] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isCreateUserSubmitting ? "Creating account..." : "Create account"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <p className="mt-4 text-sm text-[#632567]/80">
+                Click &quot;Add user&quot; to expand this form.
+              </p>
+            )}
           </div>
           ) : null}
 
