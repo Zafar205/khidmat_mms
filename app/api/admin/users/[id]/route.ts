@@ -15,10 +15,15 @@ type AcademicRecord = {
   attendanceTotal: number;
 };
 
-type ClassRecord = {
+type StudentTableRow = {
   id: string;
+  auth_user_id: string | null;
   name: string;
-  studentIds: string[];
+  email: string;
+  class_id: string | null;
+  academic_year: string;
+  attendance_present: number;
+  attendance_total: number;
 };
 
 const toBoundedNumber = (value: unknown, min: number, max: number) => {
@@ -31,9 +36,7 @@ const toBoundedNumber = (value: unknown, min: number, max: number) => {
 
 const mapAcademicRecord = (metadata: User["user_metadata"]): AcademicRecord => {
   const academic = (metadata?.academic ?? {}) as Record<string, unknown>;
-  const monthly = Array.isArray(academic.monthlyTests)
-    ? academic.monthlyTests
-    : [];
+  const monthly = Array.isArray(academic.monthlyTests) ? academic.monthlyTests : [];
 
   return {
     academicYear:
@@ -53,50 +56,26 @@ const mapAcademicRecord = (metadata: User["user_metadata"]): AcademicRecord => {
   };
 };
 
-const mapManagedUser = (user: User) => ({
-  id: user.id,
-  email: user.email ?? "",
-  role: user.user_metadata?.role as ManagedRole,
-  name: (user.user_metadata?.name as string | undefined) ?? "",
-  classId: (user.user_metadata?.classId as string | undefined) ?? "",
-  className: (user.user_metadata?.className as string | undefined) ?? "",
-  plainPassword:
-    (user.user_metadata?.password_plain as string | undefined) ?? "",
-  academic: mapAcademicRecord(user.user_metadata),
-});
-
-const parseClasses = (metadata: User["user_metadata"]): ClassRecord[] => {
-  const rawClasses = (metadata?.classes ?? []) as unknown;
-  if (!Array.isArray(rawClasses)) {
-    return [];
+const mapAcademicFromStudentRow = (student: StudentTableRow | null): AcademicRecord => {
+  if (!student) {
+    return {
+      academicYear: "2025-2026",
+      monthlyTests: [0, 0, 0, 0],
+      midTerm: 0,
+      finalTerm: 0,
+      attendancePresent: 0,
+      attendanceTotal: 0,
+    };
   }
 
-  return rawClasses
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return null;
-      }
-
-      const record = entry as Record<string, unknown>;
-      const id = typeof record.id === "string" ? record.id.trim() : "";
-      const name = typeof record.name === "string" ? record.name.trim() : "";
-      const studentIds = Array.isArray(record.studentIds)
-        ? record.studentIds
-            .filter((item) => typeof item === "string" && item.trim().length > 0)
-            .map((item) => item.trim())
-        : [];
-
-      if (!id || !name) {
-        return null;
-      }
-
-      return {
-        id,
-        name,
-        studentIds: Array.from(new Set(studentIds)),
-      };
-    })
-    .filter((value): value is ClassRecord => value !== null);
+  return {
+    academicYear: student.academic_year,
+    monthlyTests: [0, 0, 0, 0],
+    midTerm: 0,
+    finalTerm: 0,
+    attendancePresent: Number(student.attendance_present ?? 0),
+    attendanceTotal: Number(student.attendance_total ?? 0),
+  };
 };
 
 const getBearerToken = (request: Request) => {
@@ -221,41 +200,6 @@ export async function PATCH(
   }
 
   const existingMetadata = (userData.user.user_metadata ?? {}) as Record<string, unknown>;
-  const existingAcademic = mapAcademicRecord(userData.user.user_metadata);
-
-  const parsedMonthly = Array.isArray(nextAcademic?.monthlyTests)
-    ? nextAcademic.monthlyTests
-    : existingAcademic.monthlyTests;
-
-  const updatedAcademic: AcademicRecord = {
-    academicYear:
-      typeof nextAcademic?.academicYear === "string" &&
-      nextAcademic.academicYear.trim()
-        ? nextAcademic.academicYear
-        : existingAcademic.academicYear,
-    monthlyTests: [
-      toBoundedNumber(parsedMonthly[0], 0, 100),
-      toBoundedNumber(parsedMonthly[1], 0, 100),
-      toBoundedNumber(parsedMonthly[2], 0, 100),
-      toBoundedNumber(parsedMonthly[3], 0, 100),
-    ],
-    midTerm: toBoundedNumber(nextAcademic?.midTerm ?? existingAcademic.midTerm, 0, 100),
-    finalTerm: toBoundedNumber(
-      nextAcademic?.finalTerm ?? existingAcademic.finalTerm,
-      0,
-      100,
-    ),
-    attendancePresent: toBoundedNumber(
-      nextAcademic?.attendancePresent ?? existingAcademic.attendancePresent,
-      0,
-      1000,
-    ),
-    attendanceTotal: toBoundedNumber(
-      nextAcademic?.attendanceTotal ?? existingAcademic.attendanceTotal,
-      0,
-      1000,
-    ),
-  };
 
   const attributes: {
     email?: string;
@@ -267,7 +211,6 @@ export async function PATCH(
       name: name ?? (existingMetadata.name as string | undefined) ?? "",
       password_plain:
         password ?? (existingMetadata.password_plain as string | undefined) ?? "",
-      academic: updatedAcademic,
     },
   };
 
@@ -288,7 +231,127 @@ export async function PATCH(
     );
   }
 
-  return NextResponse.json({ user: mapManagedUser(data.user) });
+  if (role === "teacher") {
+    const { error: teacherUpdateError } = await auth.adminClient.from("teachers").upsert(
+      {
+        auth_user_id: id,
+        name: name ?? ((existingMetadata.name as string | undefined) ?? ""),
+        email: email ?? data.user.email ?? "",
+      },
+      { onConflict: "auth_user_id" },
+    );
+
+    if (teacherUpdateError) {
+      return NextResponse.json({ error: teacherUpdateError.message }, { status: 400 });
+    }
+
+    return NextResponse.json({
+      user: {
+        id: data.user.id,
+        email: data.user.email ?? "",
+        role: "teacher",
+        name: ((data.user.user_metadata?.name as string | undefined) ?? "").trim(),
+        classId: "",
+        className: "",
+        plainPassword: (data.user.user_metadata?.password_plain as string | undefined) ?? "",
+        academic: mapAcademicRecord(data.user.user_metadata),
+      },
+    });
+  }
+
+  const { data: existingStudentData } = await auth.adminClient
+    .from("students")
+    .select(
+      "id, auth_user_id, name, email, class_id, academic_year, attendance_present, attendance_total",
+    )
+    .eq("auth_user_id", id)
+    .maybeSingle();
+
+  const existingStudent = (existingStudentData ?? null) as StudentTableRow | null;
+  const existingAcademic = existingStudent
+    ? mapAcademicFromStudentRow(existingStudent)
+    : mapAcademicRecord(data.user.user_metadata);
+
+  const parsedMonthly = Array.isArray(nextAcademic?.monthlyTests)
+    ? nextAcademic.monthlyTests
+    : existingAcademic.monthlyTests;
+
+  const updatedAcademic: AcademicRecord = {
+    academicYear:
+      typeof nextAcademic?.academicYear === "string" && nextAcademic.academicYear.trim()
+        ? nextAcademic.academicYear
+        : existingAcademic.academicYear,
+    monthlyTests: [
+      toBoundedNumber(parsedMonthly[0], 0, 100),
+      toBoundedNumber(parsedMonthly[1], 0, 100),
+      toBoundedNumber(parsedMonthly[2], 0, 100),
+      toBoundedNumber(parsedMonthly[3], 0, 100),
+    ],
+    midTerm: toBoundedNumber(nextAcademic?.midTerm ?? existingAcademic.midTerm, 0, 100),
+    finalTerm: toBoundedNumber(nextAcademic?.finalTerm ?? existingAcademic.finalTerm, 0, 100),
+    attendancePresent: toBoundedNumber(
+      nextAcademic?.attendancePresent ?? existingAcademic.attendancePresent,
+      0,
+      1000,
+    ),
+    attendanceTotal: toBoundedNumber(
+      nextAcademic?.attendanceTotal ?? existingAcademic.attendanceTotal,
+      0,
+      1000,
+    ),
+  };
+
+  if (updatedAcademic.attendancePresent > updatedAcademic.attendanceTotal) {
+    return NextResponse.json(
+      { error: "Attendance present cannot be greater than attendance total." },
+      { status: 400 },
+    );
+  }
+
+  const { data: savedStudent, error: studentUpdateError } = await auth.adminClient
+    .from("students")
+    .upsert(
+      {
+        auth_user_id: id,
+        name: name ?? ((existingMetadata.name as string | undefined) ?? ""),
+        email: email ?? data.user.email ?? "",
+        class_id: existingStudent?.class_id ?? null,
+        academic_year: updatedAcademic.academicYear,
+        attendance_present: updatedAcademic.attendancePresent,
+        attendance_total: updatedAcademic.attendanceTotal,
+      },
+      { onConflict: "auth_user_id" },
+    )
+    .select("class_id")
+    .single();
+
+  if (studentUpdateError) {
+    return NextResponse.json({ error: studentUpdateError.message }, { status: 400 });
+  }
+
+  let className = "";
+  const classId = (savedStudent?.class_id as string | null) ?? "";
+  if (classId) {
+    const { data: classData } = await auth.adminClient
+      .from("classes")
+      .select("name")
+      .eq("id", classId)
+      .maybeSingle();
+    className = (classData?.name as string | undefined) ?? "";
+  }
+
+  return NextResponse.json({
+    user: {
+      id: data.user.id,
+      email: data.user.email ?? "",
+      role: "student" as ManagedRole,
+      name: ((data.user.user_metadata?.name as string | undefined) ?? "").trim(),
+      classId,
+      className,
+      plainPassword: (data.user.user_metadata?.password_plain as string | undefined) ?? "",
+      academic: updatedAcademic,
+    },
+  });
 }
 
 export async function DELETE(
@@ -317,46 +380,46 @@ export async function DELETE(
   }
 
   if (role === "student") {
-    const { data: usersData, error: listUsersError } = await auth.adminClient.auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
+    const { error: deleteStudentRowError } = await auth.adminClient
+      .from("students")
+      .delete()
+      .eq("auth_user_id", id);
 
-    if (listUsersError) {
-      return NextResponse.json({ error: listUsersError.message }, { status: 400 });
+    if (deleteStudentRowError) {
+      return NextResponse.json({ error: deleteStudentRowError.message }, { status: 400 });
+    }
+  }
+
+  if (role === "teacher") {
+    const { data: teacherData, error: teacherLookupError } = await auth.adminClient
+      .from("teachers")
+      .select("id")
+      .eq("auth_user_id", id)
+      .maybeSingle();
+
+    if (teacherLookupError) {
+      return NextResponse.json({ error: teacherLookupError.message }, { status: 400 });
     }
 
-    const users = usersData.users ?? [];
-    const adminUser = users.find((user) => user.email === ADMIN_EMAIL);
+    const teacherId = (teacherData?.id as string | undefined) ?? "";
+    if (teacherId) {
+      const { error: clearClassTeacherError } = await auth.adminClient
+        .from("classes")
+        .update({ teacher_id: null })
+        .eq("teacher_id", teacherId);
 
-    if (!adminUser) {
-      return NextResponse.json({ error: "Admin account not found." }, { status: 404 });
+      if (clearClassTeacherError) {
+        return NextResponse.json({ error: clearClassTeacherError.message }, { status: 400 });
+      }
     }
 
-    const classes = parseClasses(adminUser.user_metadata);
-    const nextClasses = classes.map((classRecord) => ({
-      ...classRecord,
-      studentIds: classRecord.studentIds.filter((studentId) => studentId !== id),
-    }));
+    const { error: deleteTeacherRowError } = await auth.adminClient
+      .from("teachers")
+      .delete()
+      .eq("auth_user_id", id);
 
-    const existingAdminMetadata =
-      (adminUser.user_metadata ?? {}) as Record<string, unknown>;
-
-    const { error: adminUpdateError } = await auth.adminClient.auth.admin.updateUserById(
-      adminUser.id,
-      {
-        user_metadata: {
-          ...existingAdminMetadata,
-          classes: nextClasses,
-        },
-      },
-    );
-
-    if (adminUpdateError) {
-      return NextResponse.json(
-        { error: adminUpdateError.message },
-        { status: 400 },
-      );
+    if (deleteTeacherRowError) {
+      return NextResponse.json({ error: deleteTeacherRowError.message }, { status: 400 });
     }
   }
 

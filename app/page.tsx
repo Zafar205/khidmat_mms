@@ -30,11 +30,18 @@ type ManagedUser = {
 type ClassRecord = {
   id: string;
   name: string;
+  teacherId: string;
+  teacherName: string;
   studentIds: string[];
+  subjects: Array<{
+    id: string;
+    name: string;
+  }>;
 };
 
 type ClassEditState = {
   name: string;
+  teacherId: string;
   studentIds: string[];
 };
 
@@ -60,6 +67,16 @@ type StudentReport = {
     academic: AcademicRecord;
     overallPercent: number;
     attendancePercent: number;
+    subjectMarks: Array<{
+      subjectId: string;
+      subjectName: string;
+      monthlyTest1: number;
+      monthlyTest2: number;
+      monthlyTest3: number;
+      monthlyTest4: number;
+      midTerm: number;
+      finalTerm: number;
+    }>;
   };
   classSummary: {
     className: string;
@@ -70,6 +87,85 @@ type StudentReport = {
     overallPercent: number;
     attendancePercent: number;
   };
+};
+
+type TeacherStudent = {
+  id: string;
+  name: string;
+  email: string;
+  attendancePresent: number;
+  attendanceTotal: number;
+  marks: Array<{
+    subjectId: string;
+    subjectName: string;
+    monthlyTest1: number;
+    monthlyTest2: number;
+    monthlyTest3: number;
+    monthlyTest4: number;
+    midTerm: number;
+    finalTerm: number;
+  }>;
+};
+
+type TeacherStudentMarkEdit = {
+  subjectId: string;
+  subjectName: string;
+  monthlyTest1: string;
+  monthlyTest2: string;
+  monthlyTest3: string;
+  monthlyTest4: string;
+  midTerm: string;
+  finalTerm: string;
+};
+
+type TeacherStudentEditState = {
+  name: string;
+  email: string;
+  attendancePresent: string;
+  attendanceTotal: string;
+  marks: TeacherStudentMarkEdit[];
+};
+
+type TeacherStudentsResponse = {
+  classAssigned: boolean;
+  message?: string;
+  teacherName?: string;
+  classRecord?: {
+    id: string;
+    name: string;
+  };
+  subjects: Array<{
+    id: string;
+    name: string;
+  }>;
+  students: TeacherStudent[];
+};
+
+type StudentSubjectMarkEdit = {
+  subjectId: string;
+  subjectName: string;
+  monthlyTest1: string;
+  monthlyTest2: string;
+  monthlyTest3: string;
+  monthlyTest4: string;
+  midTerm: string;
+  finalTerm: string;
+};
+
+type StudentMarksResponse = {
+  classAssigned: boolean;
+  classId: string;
+  className: string;
+  subjects: Array<{
+    subjectId: string;
+    subjectName: string;
+    monthlyTest1: number;
+    monthlyTest2: number;
+    monthlyTest3: number;
+    monthlyTest4: number;
+    midTerm: number;
+    finalTerm: number;
+  }>;
 };
 
 const ADMIN_EMAIL = "mohamedalzafar@gmail.com";
@@ -108,8 +204,35 @@ const parseAttendance = (value: string) => {
 
 const getClassEditState = (classRecord: ClassRecord): ClassEditState => ({
   name: classRecord.name,
+  teacherId: classRecord.teacherId,
   studentIds: classRecord.studentIds,
 });
+
+type NotificationBannerProps = {
+  message: string;
+  onClose: () => void;
+  className?: string;
+};
+
+const NotificationBanner = ({
+  message,
+  onClose,
+  className = "mt-4",
+}: NotificationBannerProps) => (
+  <div
+    className={`${className} flex items-center justify-between gap-3 rounded-md border border-[#632567]/60 bg-[#632567] px-3 py-2 text-sm text-white`}
+  >
+    <p className="text-white">{message}</p>
+    <button
+      type="button"
+      aria-label="Dismiss notification"
+      onClick={onClose}
+      className="rounded px-2 py-0.5 text-sm font-semibold text-white hover:bg-white/20"
+    >
+      x
+    </button>
+  </div>
+);
 
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
@@ -144,6 +267,7 @@ export default function Home() {
   const [classes, setClasses] = useState<ClassRecord[]>([]);
   const [classEdits, setClassEdits] = useState<Record<string, ClassEditState>>({});
   const [newClassName, setNewClassName] = useState("");
+  const [newClassTeacherId, setNewClassTeacherId] = useState("");
   const [classesError, setClassesError] = useState("");
   const [classesMessage, setClassesMessage] = useState("");
   const [loadingClasses, setLoadingClasses] = useState(false);
@@ -152,6 +276,32 @@ export default function Home() {
   const [deletingClassId, setDeletingClassId] = useState("");
   const [expandedClassId, setExpandedClassId] = useState("");
   const [classStudentSearch, setClassStudentSearch] = useState<Record<string, string>>({});
+  const [newSubjectNameByClass, setNewSubjectNameByClass] = useState<Record<string, string>>({});
+  const [addingSubjectClassId, setAddingSubjectClassId] = useState("");
+  const [deletingSubjectKey, setDeletingSubjectKey] = useState("");
+  const [studentSubjectMarks, setStudentSubjectMarks] = useState<
+    Record<
+      string,
+      {
+        classAssigned: boolean;
+        className: string;
+        marks: StudentSubjectMarkEdit[];
+      }
+    >
+  >({});
+  const [loadingStudentMarksUserId, setLoadingStudentMarksUserId] = useState("");
+  const [teacherStudents, setTeacherStudents] = useState<TeacherStudent[]>([]);
+  const [teacherClassName, setTeacherClassName] = useState("");
+  const [teacherName, setTeacherName] = useState("");
+  const [teacherClassAssigned, setTeacherClassAssigned] = useState(false);
+  const [teacherMessage, setTeacherMessage] = useState("");
+  const [teacherError, setTeacherError] = useState("");
+  const [loadingTeacherStudents, setLoadingTeacherStudents] = useState(false);
+  const [savingTeacherStudentId, setSavingTeacherStudentId] = useState("");
+  const [teacherEdits, setTeacherEdits] = useState<
+    Record<string, TeacherStudentEditState>
+  >({});
+  const [editingTeacherStudentId, setEditingTeacherStudentId] = useState("");
 
   useEffect(() => {
     const fetchSession = async () => {
@@ -212,6 +362,11 @@ export default function Home() {
 
   const classAssignableStudents = useMemo(
     () => managedUsers.filter((user) => user.role === "student"),
+    [managedUsers],
+  );
+
+  const teacherUsers = useMemo(
+    () => managedUsers.filter((user) => user.role === "teacher"),
     [managedUsers],
   );
 
@@ -391,6 +546,95 @@ export default function Home() {
     }
   }, [session?.access_token]);
 
+  const callTeacherApi = useCallback(
+    async (path: string, options: RequestInit = {}) => {
+      const token = session?.access_token;
+      if (!token) {
+        throw new Error("You are not authenticated.");
+      }
+
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+      };
+
+      if (options.body) {
+        headers["Content-Type"] = "application/json";
+      }
+
+      const response = await fetch(path, {
+        ...options,
+        headers: {
+          ...headers,
+          ...(options.headers ?? {}),
+        },
+      });
+
+      const responseData = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(responseData.error ?? "Request failed.");
+      }
+
+      return responseData;
+    },
+    [session?.access_token],
+  );
+
+  const loadTeacherStudents = useCallback(async () => {
+    setLoadingTeacherStudents(true);
+    setTeacherError("");
+
+    try {
+      const response = await callTeacherApi("/api/teacher/students", {
+        method: "GET",
+      });
+
+      const data = response as TeacherStudentsResponse;
+      const classAssigned = Boolean(data.classAssigned);
+      const students = data.students ?? [];
+
+      setTeacherClassAssigned(classAssigned);
+      setTeacherClassName(data.classRecord?.name ?? "");
+      setTeacherName(data.teacherName ?? "");
+      setTeacherMessage(data.message ?? "");
+      setTeacherStudents(students);
+
+      const nextEdits: Record<string, TeacherStudentEditState> = {};
+      for (const student of students) {
+        nextEdits[student.id] = {
+          name: student.name,
+          email: student.email,
+          attendancePresent: student.attendancePresent.toString(),
+          attendanceTotal: student.attendanceTotal.toString(),
+          marks: student.marks.map((mark) => ({
+            subjectId: mark.subjectId,
+            subjectName: mark.subjectName,
+            monthlyTest1: toScoreString(mark.monthlyTest1),
+            monthlyTest2: toScoreString(mark.monthlyTest2),
+            monthlyTest3: toScoreString(mark.monthlyTest3),
+            monthlyTest4: toScoreString(mark.monthlyTest4),
+            midTerm: toScoreString(mark.midTerm),
+            finalTerm: toScoreString(mark.finalTerm),
+          })),
+        };
+      }
+
+      setTeacherEdits(nextEdits);
+    } catch (error) {
+      setTeacherError(
+        error instanceof Error ? error.message : "Unable to load class students.",
+      );
+      setTeacherClassAssigned(false);
+      setTeacherClassName("");
+      setTeacherStudents([]);
+    } finally {
+      setLoadingTeacherStudents(false);
+    }
+  }, [callTeacherApi]);
+
   useEffect(() => {
     if (currentRole !== "admin") {
       return;
@@ -407,6 +651,14 @@ export default function Home() {
 
     void loadStudentReport();
   }, [currentRole, loadStudentReport]);
+
+  useEffect(() => {
+    if (currentRole !== "teacher") {
+      return;
+    }
+
+    void loadTeacherStudents();
+  }, [currentRole, loadTeacherStudents]);
 
   const handleAdminBootstrap = async () => {
     const signupResult = await supabase.auth.signUp({
@@ -519,11 +771,13 @@ export default function Home() {
         method: "POST",
         body: JSON.stringify({
           name: newClassName,
+          teacherId: newClassTeacherId,
         }),
       });
 
       setClassesMessage("Class created successfully.");
       setNewClassName("");
+      setNewClassTeacherId("");
       await loadClasses();
     } catch (error) {
       setClassesError(
@@ -542,6 +796,7 @@ export default function Home() {
     setClassEdits((previous) => {
       const existing = previous[classId] ?? {
         name: "",
+        teacherId: "",
         studentIds: [],
       };
 
@@ -566,10 +821,146 @@ export default function Home() {
     setExpandedClassId((previous) => (previous === classId ? "" : classId));
   };
 
+  const handleAddSubjectToClass = async (classId: string) => {
+    const name = (newSubjectNameByClass[classId] ?? "").trim();
+    if (!name) {
+      setClassesError("Subject name is required.");
+      return;
+    }
+
+    setClassesError("");
+    setClassesMessage("");
+    setAddingSubjectClassId(classId);
+
+    try {
+      const response = (await callAdminApi(`/api/admin/classes/${classId}/subjects`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      })) as {
+        message?: string;
+        subject?: {
+          id: string;
+          name: string;
+        };
+      };
+
+      setNewSubjectNameByClass((previous) => ({
+        ...previous,
+        [classId]: "",
+      }));
+      setClassesMessage(response.message ?? "Subject added.");
+
+      await loadClasses();
+    } catch (error) {
+      setClassesError(
+        error instanceof Error ? error.message : "Unable to add subject.",
+      );
+    } finally {
+      setAddingSubjectClassId("");
+    }
+  };
+
+  const handleDeleteSubjectFromClass = async (
+    classId: string,
+    subjectId: string,
+    subjectName: string,
+  ) => {
+    const confirmed = window.confirm(`Delete subject "${subjectName}"?`);
+    if (!confirmed) {
+      return;
+    }
+
+    const subjectKey = `${classId}:${subjectId}`;
+    setClassesError("");
+    setClassesMessage("");
+    setDeletingSubjectKey(subjectKey);
+
+    try {
+      await callAdminApi(`/api/admin/classes/${classId}/subjects/${subjectId}`, {
+        method: "DELETE",
+      });
+
+      setClassesMessage("Subject deleted.");
+      await loadClasses();
+    } catch (error) {
+      setClassesError(
+        error instanceof Error ? error.message : "Unable to delete subject.",
+      );
+    } finally {
+      setDeletingSubjectKey("");
+    }
+  };
+
+
+  const loadStudentSubjectMarks = useCallback(
+    async (userId: string) => {
+      setUsersError("");
+      setLoadingStudentMarksUserId(userId);
+
+      try {
+        const response = (await callAdminApi(`/api/admin/students/${userId}/marks`, {
+          method: "GET",
+        })) as StudentMarksResponse;
+
+        setStudentSubjectMarks((previous) => ({
+          ...previous,
+          [userId]: {
+            classAssigned: response.classAssigned,
+            className: response.className,
+            marks: (response.subjects ?? []).map((subject) => ({
+              subjectId: subject.subjectId,
+              subjectName: subject.subjectName,
+              monthlyTest1: toScoreString(subject.monthlyTest1),
+              monthlyTest2: toScoreString(subject.monthlyTest2),
+              monthlyTest3: toScoreString(subject.monthlyTest3),
+              monthlyTest4: toScoreString(subject.monthlyTest4),
+              midTerm: toScoreString(subject.midTerm),
+              finalTerm: toScoreString(subject.finalTerm),
+            })),
+          },
+        }));
+      } catch (error) {
+        setUsersError(
+          error instanceof Error
+            ? error.message
+            : "Unable to load student subject marks.",
+        );
+      } finally {
+        setLoadingStudentMarksUserId("");
+      }
+    },
+    [callAdminApi],
+  );
+
+  const handleStudentSubjectMarkField = (
+    userId: string,
+    subjectId: string,
+    field: keyof Omit<StudentSubjectMarkEdit, "subjectId" | "subjectName">,
+    value: string,
+  ) => {
+    setStudentSubjectMarks((previous) => {
+      const existing = previous[userId];
+      if (!existing) {
+        return previous;
+      }
+
+      return {
+        ...previous,
+        [userId]: {
+          ...existing,
+          marks: existing.marks.map((mark) =>
+            mark.subjectId === subjectId ? { ...mark, [field]: value } : mark,
+          ),
+        },
+      };
+    });
+  };
+
   const handleStudentToggleInClass = (classId: string, studentId: string) => {
     setClassEdits((previous) => {
       const existing = previous[classId] ?? {
         name: "",
+        teacherId: "",
         studentIds: [],
       };
 
@@ -617,6 +1008,7 @@ export default function Home() {
         method: "PATCH",
         body: JSON.stringify({
           name: edit.name,
+          teacherId: edit.teacherId,
           studentIds: edit.studentIds,
         }),
       });
@@ -657,41 +1049,14 @@ export default function Home() {
     }));
   };
 
-  const handleMonthlyTestEdit = (userId: string, index: number, value: string) => {
-    setUserEdits((previous) => {
-      const existing = previous[userId] ?? {
-        email: "",
-        name: "",
-        password: "",
-        academicYear: "2025-2026",
-        monthlyTests: ["0", "0", "0", "0"] as [string, string, string, string],
-        midTerm: "0",
-        finalTerm: "0",
-        attendancePresent: "0",
-        attendanceTotal: "0",
-      };
-
-      const nextMonthly = [...existing.monthlyTests] as [
-        string,
-        string,
-        string,
-        string,
-      ];
-      nextMonthly[index] = value;
-
-      return {
-        ...previous,
-        [userId]: {
-          ...existing,
-          monthlyTests: nextMonthly,
-        },
-      };
-    });
-  };
-
   const handleSaveUser = async (userId: string) => {
     const edit = userEdits[userId];
     if (!edit) {
+      return;
+    }
+
+    const user = managedUsers.find((entry) => entry.id === userId);
+    if (!user) {
       return;
     }
 
@@ -733,6 +1098,26 @@ export default function Home() {
         body: JSON.stringify(payload),
       });
 
+      if (user.role === "student") {
+        const markState = studentSubjectMarks[userId];
+        if (markState && markState.classAssigned) {
+          await callAdminApi(`/api/admin/students/${userId}/marks`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              marks: markState.marks.map((mark) => ({
+                subjectId: mark.subjectId,
+                monthlyTest1: parseScore(mark.monthlyTest1),
+                monthlyTest2: parseScore(mark.monthlyTest2),
+                monthlyTest3: parseScore(mark.monthlyTest3),
+                monthlyTest4: parseScore(mark.monthlyTest4),
+                midTerm: parseScore(mark.midTerm),
+                finalTerm: parseScore(mark.finalTerm),
+              })),
+            }),
+          });
+        }
+      }
+
       setUsersMessage("User updated successfully.");
       await loadManagedUsers();
     } catch (error) {
@@ -741,6 +1126,15 @@ export default function Home() {
       );
     } finally {
       setSavingUserId("");
+    }
+  };
+
+  const handleToggleUserEdit = async (user: ManagedUser) => {
+    const nextEditingUserId = editingUserId === user.id ? "" : user.id;
+    setEditingUserId(nextEditingUserId);
+
+    if (nextEditingUserId && user.role === "student") {
+      await loadStudentSubjectMarks(user.id);
     }
   };
 
@@ -818,6 +1212,145 @@ export default function Home() {
     await supabase.auth.signOut();
   };
 
+  const handleTeacherSubjectField = (
+    userId: string,
+    subjectId: string,
+    field: keyof Omit<TeacherStudentMarkEdit, "subjectId" | "subjectName">,
+    value: string,
+  ) => {
+    setTeacherEdits((previous) => ({
+      ...previous,
+      [userId]: {
+        ...(previous[userId] ?? {
+          name: "",
+          email: "",
+          attendancePresent: "0",
+          attendanceTotal: "0",
+          marks: [],
+        }),
+        marks: (previous[userId]?.marks ?? []).map((mark) =>
+          mark.subjectId === subjectId ? { ...mark, [field]: value } : mark,
+        ),
+      },
+    }));
+  };
+
+  const handleTeacherAttendanceField = (
+    userId: string,
+    field: "attendancePresent" | "attendanceTotal",
+    value: string,
+  ) => {
+    setTeacherEdits((previous) => ({
+      ...previous,
+      [userId]: {
+        ...(previous[userId] ?? {
+          name: "",
+          email: "",
+          attendancePresent: "0",
+          attendanceTotal: "0",
+          marks: [],
+        }),
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSaveTeacherStudent = async (studentId: string) => {
+    const edit = teacherEdits[studentId];
+    if (!edit) {
+      return;
+    }
+
+    const normalizedMarks = edit.marks.map((mark) => ({
+      subjectId: mark.subjectId,
+      subjectName: mark.subjectName,
+      monthlyTest1: parseScore(mark.monthlyTest1),
+      monthlyTest2: parseScore(mark.monthlyTest2),
+      monthlyTest3: parseScore(mark.monthlyTest3),
+      monthlyTest4: parseScore(mark.monthlyTest4),
+      midTerm: parseScore(mark.midTerm),
+      finalTerm: parseScore(mark.finalTerm),
+    }));
+    const normalizedAttendancePresent = parseAttendance(edit.attendancePresent);
+    const normalizedAttendanceTotal = parseAttendance(edit.attendanceTotal);
+
+    if (normalizedAttendancePresent > normalizedAttendanceTotal) {
+      setTeacherError("Attendance present cannot be greater than attendance total.");
+      return;
+    }
+
+    setTeacherError("");
+    setTeacherMessage("");
+    setSavingTeacherStudentId(studentId);
+
+    try {
+      await callTeacherApi(`/api/teacher/students/${studentId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          marks: normalizedMarks.map((mark) => ({
+            subjectId: mark.subjectId,
+            monthlyTest1: mark.monthlyTest1,
+            monthlyTest2: mark.monthlyTest2,
+            monthlyTest3: mark.monthlyTest3,
+            monthlyTest4: mark.monthlyTest4,
+            midTerm: mark.midTerm,
+            finalTerm: mark.finalTerm,
+          })),
+          attendancePresent: normalizedAttendancePresent,
+          attendanceTotal: normalizedAttendanceTotal,
+        }),
+      });
+
+      setTeacherMessage("Student subject marks updated.");
+
+      setTeacherStudents((previous) =>
+        previous.map((student) =>
+          student.id === studentId
+            ? {
+                ...student,
+                attendancePresent: normalizedAttendancePresent,
+                attendanceTotal: normalizedAttendanceTotal,
+                marks: normalizedMarks,
+              }
+            : student,
+        ),
+      );
+
+      setTeacherEdits((previous) => ({
+        ...previous,
+        [studentId]: {
+          ...(previous[studentId] ?? {
+            name: edit.name,
+            email: edit.email,
+            attendancePresent: normalizedAttendancePresent.toString(),
+            attendanceTotal: normalizedAttendanceTotal.toString(),
+            marks: [],
+          }),
+          name: edit.name,
+          email: edit.email,
+          attendancePresent: normalizedAttendancePresent.toString(),
+          attendanceTotal: normalizedAttendanceTotal.toString(),
+          marks: normalizedMarks.map((mark) => ({
+            subjectId: mark.subjectId,
+            subjectName: mark.subjectName,
+            monthlyTest1: toScoreString(mark.monthlyTest1),
+            monthlyTest2: toScoreString(mark.monthlyTest2),
+            monthlyTest3: toScoreString(mark.monthlyTest3),
+            monthlyTest4: toScoreString(mark.monthlyTest4),
+            midTerm: toScoreString(mark.midTerm),
+            finalTerm: toScoreString(mark.finalTerm),
+          })),
+        },
+      }));
+    } catch (error) {
+      setTeacherError(
+        error instanceof Error ? error.message : "Unable to update student record.",
+      );
+    } finally {
+      setSavingTeacherStudentId("");
+    }
+  };
+
   if (loadingSession) {
     return (
       <div className="min-h-screen bg-[#632567] text-white grid place-items-center px-6">
@@ -865,15 +1398,19 @@ export default function Home() {
             </div>
 
             {authError ? (
-              <p className="rounded-md border border-[#632567]/50 bg-[#632567] px-3 py-2 text-sm text-white">
-                {authError}
-              </p>
+              <NotificationBanner
+                message={authError}
+                onClose={() => setAuthError("")}
+                className=""
+              />
             ) : null}
 
             {authMessage ? (
-              <p className="rounded-md border border-[#632567]/40 bg-white px-3 py-2 text-sm text-[#632567]">
-                {authMessage}
-              </p>
+              <NotificationBanner
+                message={authMessage}
+                onClose={() => setAuthMessage("")}
+                className=""
+              />
             ) : null}
 
             <button
@@ -890,9 +1427,6 @@ export default function Home() {
   }
 
   if (currentRole === "student") {
-    const monthlyScores = studentReport?.student.academic.monthlyTests ?? [0, 0, 0, 0];
-    const classMonthly = studentReport?.classSummary.monthlyTests ?? [0, 0, 0, 0];
-
     return (
       <div className="min-h-screen bg-[#632567] text-white py-6 px-3 sm:px-6 lg:px-10">
         <main className="w-full rounded-2xl border border-white/40 bg-white p-4 text-[#632567] shadow-2xl sm:p-6">
@@ -916,9 +1450,11 @@ export default function Home() {
           </div>
 
           {studentReportError ? (
-            <p className="mt-5 rounded-md border border-[#632567]/50 bg-[#632567] px-3 py-2 text-sm text-white">
-              {studentReportError}
-            </p>
+            <NotificationBanner
+              message={studentReportError}
+              onClose={() => setStudentReportError("")}
+              className="mt-5"
+            />
           ) : null}
 
           {loadingStudentReport ? (
@@ -927,7 +1463,7 @@ export default function Home() {
 
           {!loadingStudentReport && studentReport ? (
             <>
-              <section className="mt-6 grid gap-4 md:grid-cols-3">
+              <section className="mt-6 grid gap-4 md:grid-cols-2">
                 <div className="rounded-xl border border-[#632567]/40 bg-white p-4">
                   <p className="text-xs uppercase tracking-wide text-[#632567]/75">Overall percentage</p>
                   <p className="mt-2 text-3xl font-bold">{studentReport.student.overallPercent}%</p>
@@ -939,61 +1475,50 @@ export default function Home() {
                     {studentReport.student.academic.attendancePresent} / {studentReport.student.academic.attendanceTotal} days
                   </p>
                 </div>
-                <div className="rounded-xl border border-[#632567]/40 bg-white p-4">
-                  <p className="text-xs uppercase tracking-wide text-[#632567]/75">
-                    {studentReport.classSummary.className} average
-                  </p>
-                  <p className="mt-2 text-3xl font-bold">{studentReport.classSummary.overallPercent}%</p>
-                  <p className="mt-1 text-xs text-[#632567]/75">
-                    {studentReport.classSummary.studentsCount} students
-                  </p>
-                </div>
               </section>
 
               <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
-                <h2 className="text-xl font-semibold">Assessment Tracking</h2>
+                <h2 className="text-xl font-semibold">Subject-wise Marks</h2>
                 <p className="mt-1 text-sm text-[#632567]/85">
-                  Four monthly tests and terminal exams (Mid-term and Final-term).
+                  Your marks broken down by each subject.
                 </p>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full min-w-[640px] border-collapse text-sm">
-                    <thead>
-                      <tr className="text-left text-[#632567]/80">
-                        <th className="border-b border-[#632567]/25 px-2 py-2">Assessment</th>
-                        <th className="border-b border-[#632567]/25 px-2 py-2">Your %</th>
-                        <th className="border-b border-[#632567]/25 px-2 py-2">Class %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[
-                        { label: "Monthly Test 1", student: monthlyScores[0], classAvg: classMonthly[0] },
-                        { label: "Monthly Test 2", student: monthlyScores[1], classAvg: classMonthly[1] },
-                        { label: "Monthly Test 3", student: monthlyScores[2], classAvg: classMonthly[2] },
-                        { label: "Monthly Test 4", student: monthlyScores[3], classAvg: classMonthly[3] },
-                        {
-                          label: "Mid-term",
-                          student: studentReport.student.academic.midTerm,
-                          classAvg: studentReport.classSummary.midTerm,
-                        },
-                        {
-                          label: "Final-term",
-                          student: studentReport.student.academic.finalTerm,
-                          classAvg: studentReport.classSummary.finalTerm,
-                        },
-                      ].map((item) => (
-                        <tr key={item.label}>
-                          <td className="border-b border-[#632567]/15 px-2 py-2">{item.label}</td>
-                          <td className="border-b border-[#632567]/15 px-2 py-2 font-semibold">
-                            {item.student}%
-                          </td>
-                          <td className="border-b border-[#632567]/15 px-2 py-2">
-                            {item.classAvg}%
-                          </td>
+
+                {studentReport.student.subjectMarks.length === 0 ? (
+                  <p className="mt-3 text-sm text-[#632567]/85">
+                    No subjects found for your class yet.
+                  </p>
+                ) : (
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="w-full min-w-[960px] border-collapse text-sm">
+                      <thead>
+                        <tr className="text-left text-[#632567]/80">
+                          <th className="border-b border-[#632567]/25 px-2 py-2">Subject</th>
+                          <th className="border-b border-[#632567]/25 px-2 py-2">MT 1</th>
+                          <th className="border-b border-[#632567]/25 px-2 py-2">MT 2</th>
+                          <th className="border-b border-[#632567]/25 px-2 py-2">MT 3</th>
+                          <th className="border-b border-[#632567]/25 px-2 py-2">MT 4</th>
+                          <th className="border-b border-[#632567]/25 px-2 py-2">Mid</th>
+                          <th className="border-b border-[#632567]/25 px-2 py-2">Final</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {studentReport.student.subjectMarks.map((subject) => (
+                          <tr key={subject.subjectId}>
+                            <td className="border-b border-[#632567]/15 px-2 py-2 font-semibold text-[#632567]">
+                              {subject.subjectName}
+                            </td>
+                            <td className="border-b border-[#632567]/15 px-2 py-2">{subject.monthlyTest1}%</td>
+                            <td className="border-b border-[#632567]/15 px-2 py-2">{subject.monthlyTest2}%</td>
+                            <td className="border-b border-[#632567]/15 px-2 py-2">{subject.monthlyTest3}%</td>
+                            <td className="border-b border-[#632567]/15 px-2 py-2">{subject.monthlyTest4}%</td>
+                            <td className="border-b border-[#632567]/15 px-2 py-2">{subject.midTerm}%</td>
+                            <td className="border-b border-[#632567]/15 px-2 py-2">{subject.finalTerm}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </section>
 
               <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
@@ -1011,20 +1536,325 @@ export default function Home() {
 
   if (currentRole === "teacher") {
     return (
-      <div className="min-h-screen bg-[#632567] text-white py-14 px-6">
-        <main className="mx-auto w-full max-w-xl rounded-2xl border border-white/40 bg-white p-8 shadow-2xl text-[#632567]">
-          <h1 className="text-2xl font-bold">Teacher Dashboard</h1>
-          <p className="mt-3 text-[#632567]/85">
-            Teacher modules are active for account access. Student reporting is now available from student accounts.
-          </p>
+      <div className="min-h-screen bg-[#632567] text-white py-6 px-3 sm:px-6 lg:px-10">
+        <main className="w-full rounded-2xl border border-white/40 bg-white p-4 text-[#632567] shadow-2xl sm:p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold">Teacher Dashboard</h1>
+              <p className="mt-1 text-sm text-[#632567]/85">
+                {teacherName ? `Welcome, ${teacherName}.` : "Manage marks and attendance for your class students."}
+              </p>
+              <p className="mt-1 text-sm text-[#632567]/85">
+                Class: {teacherClassName || "Not assigned"}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-[#632567]/50 px-4 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+                onClick={() => void loadTeacherStudents()}
+              >
+                Refresh
+              </button>
+              <button
+                type="button"
+                className="rounded-lg border border-[#632567]/50 px-4 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+                onClick={handleSignOut}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
 
-          <button
-            type="button"
-            className="mt-6 rounded-lg border border-[#632567]/50 px-4 py-2 font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
-            onClick={handleSignOut}
-          >
-            Sign out
-          </button>
+          {teacherError ? (
+            <NotificationBanner
+              message={teacherError}
+              onClose={() => setTeacherError("")}
+              className="mt-5"
+            />
+          ) : null}
+
+          {teacherMessage ? (
+            <NotificationBanner
+              message={teacherMessage}
+              onClose={() => setTeacherMessage("")}
+              className="mt-5"
+            />
+          ) : null}
+
+          {loadingTeacherStudents ? (
+            <p className="mt-5 text-sm text-[#632567]/85">Loading assigned class students...</p>
+          ) : null}
+
+          {!loadingTeacherStudents && !teacherClassAssigned ? (
+            <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
+              <h2 className="text-xl font-semibold">No class assignment</h2>
+              <p className="mt-2 text-sm text-[#632567]/85">
+                No class is assigned to you.
+              </p>
+            </section>
+          ) : null}
+
+          {!loadingTeacherStudents && teacherClassAssigned && teacherStudents.length === 0 ? (
+            <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
+              <h2 className="text-xl font-semibold">Class Students</h2>
+              <p className="mt-2 text-sm text-[#632567]/85">
+                No students found in your assigned class.
+              </p>
+            </section>
+          ) : null}
+
+          {!loadingTeacherStudents && teacherClassAssigned && teacherStudents.length > 0 ? (
+            <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
+              <h2 className="text-xl font-semibold">Class Students</h2>
+              <p className="mt-1 text-sm text-[#632567]/85">
+                Update subject-wise marks for students in your class only.
+              </p>
+
+              <div className="mt-4 space-y-4">
+                {teacherStudents.map((student) => {
+                  const isEditing = editingTeacherStudentId === student.id;
+                  const edit = teacherEdits[student.id] ?? {
+                    name: student.name,
+                    email: student.email,
+                    attendancePresent: student.attendancePresent.toString(),
+                    attendanceTotal: student.attendanceTotal.toString(),
+                    marks: student.marks.map((mark) => ({
+                      subjectId: mark.subjectId,
+                      subjectName: mark.subjectName,
+                      monthlyTest1: toScoreString(mark.monthlyTest1),
+                      monthlyTest2: toScoreString(mark.monthlyTest2),
+                      monthlyTest3: toScoreString(mark.monthlyTest3),
+                      monthlyTest4: toScoreString(mark.monthlyTest4),
+                      midTerm: toScoreString(mark.midTerm),
+                      finalTerm: toScoreString(mark.finalTerm),
+                    })),
+                  };
+
+                  return (
+                    <article
+                      key={student.id}
+                      className="rounded-xl border border-[#632567]/40 bg-white p-4"
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="grid flex-1 gap-3 sm:grid-cols-2">
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-[#632567]/75">Student</p>
+                            <p className="mt-1 text-lg font-medium text-[#632567]">{student.name}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs uppercase tracking-wide text-[#632567]/75">Email</p>
+                            <p className="mt-1 text-sm font-medium text-[#632567] break-all">{student.email}</p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditingTeacherStudentId((previous) =>
+                              previous === student.id ? "" : student.id,
+                            )
+                          }
+                          className="rounded-lg border border-[#632567]/50 px-3 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+                        >
+                          {isEditing ? "Close" : "Edit"}
+                        </button>
+                      </div>
+
+                      {isEditing ? (
+                        <>
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                Attendance Present
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={1000}
+                                className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2 text-sm outline-none focus:border-[#632567]"
+                                value={edit.attendancePresent}
+                                onChange={(event) =>
+                                  handleTeacherAttendanceField(
+                                    student.id,
+                                    "attendancePresent",
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                Attendance Total
+                              </label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={1000}
+                                className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2 text-sm outline-none focus:border-[#632567]"
+                                value={edit.attendanceTotal}
+                                onChange={(event) =>
+                                  handleTeacherAttendanceField(
+                                    student.id,
+                                    "attendanceTotal",
+                                    event.target.value,
+                                  )
+                                }
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-4 space-y-4">
+                            {edit.marks.map((mark) => (
+                              <div
+                                key={`${student.id}-${mark.subjectId}`}
+                                className="rounded-lg border border-[#632567]/25 p-3"
+                              >
+                                <p className="text-sm font-semibold text-[#632567]">{mark.subjectName}</p>
+                                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                                  <div>
+                                    <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                      Monthly Test 1 (%)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2 text-sm outline-none focus:border-[#632567]"
+                                      value={mark.monthlyTest1}
+                                      onChange={(event) =>
+                                        handleTeacherSubjectField(
+                                          student.id,
+                                          mark.subjectId,
+                                          "monthlyTest1",
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                      Monthly Test 2 (%)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2 text-sm outline-none focus:border-[#632567]"
+                                      value={mark.monthlyTest2}
+                                      onChange={(event) =>
+                                        handleTeacherSubjectField(
+                                          student.id,
+                                          mark.subjectId,
+                                          "monthlyTest2",
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                      Monthly Test 3 (%)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2 text-sm outline-none focus:border-[#632567]"
+                                      value={mark.monthlyTest3}
+                                      onChange={(event) =>
+                                        handleTeacherSubjectField(
+                                          student.id,
+                                          mark.subjectId,
+                                          "monthlyTest3",
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                      Monthly Test 4 (%)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2 text-sm outline-none focus:border-[#632567]"
+                                      value={mark.monthlyTest4}
+                                      onChange={(event) =>
+                                        handleTeacherSubjectField(
+                                          student.id,
+                                          mark.subjectId,
+                                          "monthlyTest4",
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                      Mid-term (%)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2 text-sm outline-none focus:border-[#632567]"
+                                      value={mark.midTerm}
+                                      onChange={(event) =>
+                                        handleTeacherSubjectField(
+                                          student.id,
+                                          mark.subjectId,
+                                          "midTerm",
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                      Final-term (%)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2 text-sm outline-none focus:border-[#632567]"
+                                      value={mark.finalTerm}
+                                      onChange={(event) =>
+                                        handleTeacherSubjectField(
+                                          student.id,
+                                          mark.subjectId,
+                                          "finalTerm",
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-4">
+                            <button
+                              type="button"
+                              onClick={() => void handleSaveTeacherStudent(student.id)}
+                              disabled={savingTeacherStudentId === student.id}
+                              className="rounded-lg bg-[#632567] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#522053] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {savingTeacherStudentId === student.id ? "Saving..." : "Save"}
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
         </main>
       </div>
     );
@@ -1152,15 +1982,19 @@ export default function Home() {
 
               <div className="md:col-span-2">
                 {createUserError ? (
-                  <p className="rounded-md border border-[#632567]/50 bg-[#632567] px-3 py-2 text-sm text-white">
-                    {createUserError}
-                  </p>
+                  <NotificationBanner
+                    message={createUserError}
+                    onClose={() => setCreateUserError("")}
+                    className=""
+                  />
                 ) : null}
 
                 {createUserMessage ? (
-                  <p className="rounded-md border border-[#632567]/40 bg-white px-3 py-2 text-sm text-[#632567]">
-                    {createUserMessage}
-                  </p>
+                  <NotificationBanner
+                    message={createUserMessage}
+                    onClose={() => setCreateUserMessage("")}
+                    className=""
+                  />
                 ) : null}
               </div>
 
@@ -1198,27 +2032,35 @@ export default function Home() {
             </div>
 
             {adminSection === "classes" && classesError ? (
-              <p className="mt-4 rounded-md border border-[#632567]/50 bg-[#632567] px-3 py-2 text-sm text-white">
-                {classesError}
-              </p>
+              <NotificationBanner
+                message={classesError}
+                onClose={() => setClassesError("")}
+                className="mt-4"
+              />
             ) : null}
 
             {adminSection === "classes" && classesMessage ? (
-              <p className="mt-4 rounded-md border border-[#632567]/40 bg-white px-3 py-2 text-sm text-[#632567]">
-                {classesMessage}
-              </p>
+              <NotificationBanner
+                message={classesMessage}
+                onClose={() => setClassesMessage("")}
+                className="mt-4"
+              />
             ) : null}
 
             {adminSection !== "classes" && usersError ? (
-              <p className="mt-4 rounded-md border border-[#632567]/50 bg-[#632567] px-3 py-2 text-sm text-white">
-                {usersError}
-              </p>
+              <NotificationBanner
+                message={usersError}
+                onClose={() => setUsersError("")}
+                className="mt-4"
+              />
             ) : null}
 
             {adminSection !== "classes" && usersMessage ? (
-              <p className="mt-4 rounded-md border border-[#632567]/40 bg-white px-3 py-2 text-sm text-[#632567]">
-                {usersMessage}
-              </p>
+              <NotificationBanner
+                message={usersMessage}
+                onClose={() => setUsersMessage("")}
+                className="mt-4"
+              />
             ) : null}
 
             {adminSection === "classes" && loadingClasses ? (
@@ -1281,7 +2123,7 @@ export default function Home() {
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setEditingUserId((previous) => (previous === user.id ? "" : user.id))}
+                          onClick={() => void handleToggleUserEdit(user)}
                           className="rounded-lg border border-[#632567]/50 px-3 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
                         >
                           {isEditing ? "Close" : "Edit"}
@@ -1347,7 +2189,7 @@ export default function Home() {
                         {user.role === "student" ? (
                           <div className="mt-4 rounded-lg border border-[#632567]/30 bg-white p-4">
                             <p className="text-xs uppercase tracking-wide text-[#632567]/75">
-                              Academic structure and attendance
+                              Student academics and attendance
                             </p>
 
                             <div className="mt-3 grid gap-4 md:grid-cols-2">
@@ -1363,60 +2205,6 @@ export default function Home() {
                                     handleUserEditField(user.id, "academicYear", event.target.value)
                                   }
                                   placeholder="2025-2026"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                              {edit.monthlyTests.map((value, index) => (
-                                <div key={`${user.id}-monthly-${index}`}>
-                                  <label className="mb-2 block text-xs uppercase tracking-wide text-[#632567]/75">
-                                    Monthly Test {index + 1} (%)
-                                  </label>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={100}
-                                    className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
-                                    value={value}
-                                    onChange={(event) =>
-                                      handleMonthlyTestEdit(user.id, index, event.target.value)
-                                    }
-                                  />
-                                </div>
-                              ))}
-                            </div>
-
-                            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                              <div>
-                                <label className="mb-2 block text-xs uppercase tracking-wide text-[#632567]/75">
-                                  Mid-term (%)
-                                </label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
-                                  value={edit.midTerm}
-                                  onChange={(event) =>
-                                    handleUserEditField(user.id, "midTerm", event.target.value)
-                                  }
-                                />
-                              </div>
-
-                              <div>
-                                <label className="mb-2 block text-xs uppercase tracking-wide text-[#632567]/75">
-                                  Final-term (%)
-                                </label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
-                                  value={edit.finalTerm}
-                                  onChange={(event) =>
-                                    handleUserEditField(user.id, "finalTerm", event.target.value)
-                                  }
                                 />
                               </div>
 
@@ -1439,7 +2227,9 @@ export default function Home() {
                                   }
                                 />
                               </div>
+                            </div>
 
+                            <div className="mt-4 grid gap-4 md:grid-cols-2">
                               <div>
                                 <label className="mb-2 block text-xs uppercase tracking-wide text-[#632567]/75">
                                   Attendance total
@@ -1460,6 +2250,104 @@ export default function Home() {
                                 />
                               </div>
                             </div>
+
+                            {loadingStudentMarksUserId === user.id ? (
+                              <p className="mt-4 text-sm text-[#632567]/85">
+                                Loading subject marks...
+                              </p>
+                            ) : null}
+
+                            {loadingStudentMarksUserId !== user.id ? (
+                              (() => {
+                                const markState = studentSubjectMarks[user.id];
+
+                                if (!markState) {
+                                  return (
+                                    <p className="mt-4 text-sm text-[#632567]/85">
+                                      Open this student record again to load subject marks.
+                                    </p>
+                                  );
+                                }
+
+                                if (!markState.classAssigned) {
+                                  return (
+                                    <p className="mt-4 text-sm text-[#632567]/85">
+                                      Assign this student to a class first to manage subject marks.
+                                    </p>
+                                  );
+                                }
+
+                                if (markState.marks.length === 0) {
+                                  return (
+                                    <p className="mt-4 text-sm text-[#632567]/85">
+                                      No subjects found in {markState.className || "the assigned class"}.
+                                    </p>
+                                  );
+                                }
+
+                                return (
+                                  <div className="mt-4 rounded-lg border border-[#632567]/25 p-3">
+                                    <p className="text-sm font-semibold text-[#632567]">
+                                      Subject marks ({markState.className})
+                                    </p>
+
+                                    <div className="mt-3 overflow-x-auto">
+                                      <table className="w-full min-w-[820px] border-collapse text-sm">
+                                        <thead>
+                                          <tr className="text-left text-[#632567]/80">
+                                            <th className="border-b border-[#632567]/25 px-2 py-2">Subject</th>
+                                            <th className="border-b border-[#632567]/25 px-2 py-2">MT 1</th>
+                                            <th className="border-b border-[#632567]/25 px-2 py-2">MT 2</th>
+                                            <th className="border-b border-[#632567]/25 px-2 py-2">MT 3</th>
+                                            <th className="border-b border-[#632567]/25 px-2 py-2">MT 4</th>
+                                            <th className="border-b border-[#632567]/25 px-2 py-2">Mid</th>
+                                            <th className="border-b border-[#632567]/25 px-2 py-2">Final</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {markState.marks.map((mark) => (
+                                            <tr key={`${user.id}-${mark.subjectId}`}>
+                                              <td className="border-b border-[#632567]/15 px-2 py-2 font-medium text-[#632567]">
+                                                {mark.subjectName}
+                                              </td>
+                                              {([
+                                                "monthlyTest1",
+                                                "monthlyTest2",
+                                                "monthlyTest3",
+                                                "monthlyTest4",
+                                                "midTerm",
+                                                "finalTerm",
+                                              ] as const).map((field) => (
+                                                <td
+                                                  key={`${user.id}-${mark.subjectId}-${field}`}
+                                                  className="border-b border-[#632567]/15 px-2 py-2"
+                                                >
+                                                  <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={100}
+                                                    className="w-20 rounded-lg border border-[#632567]/40 bg-white px-2 py-1.5 text-sm outline-none focus:border-[#632567]"
+                                                    value={mark[field]}
+                                                    onChange={(event) =>
+                                                      handleStudentSubjectMarkField(
+                                                        user.id,
+                                                        mark.subjectId,
+                                                        field,
+                                                        event.target.value,
+                                                      )
+                                                    }
+                                                  />
+                                                </td>
+                                              ))}
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                );
+                              })()
+                            ) : null}
                           </div>
                         ) : null}
 
@@ -1496,9 +2384,9 @@ export default function Home() {
                 >
                   <h3 className="text-base font-semibold">Create Class</h3>
                   <p className="mt-1 text-sm text-[#632567]/85">
-                    Create a class, then assign students to it.
+                    Create a class, assign a teacher, then assign students to it.
                   </p>
-                  <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
                     <input
                       type="text"
                       className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
@@ -1507,6 +2395,20 @@ export default function Home() {
                       placeholder="Class name (e.g. Grade 9-A)"
                       required
                     />
+
+                    <select
+                      className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
+                      value={newClassTeacherId}
+                      onChange={(event) => setNewClassTeacherId(event.target.value)}
+                    >
+                      <option value="">No teacher assigned</option>
+                      {teacherUsers.map((teacher) => (
+                        <option key={`new-class-teacher-${teacher.id}`} value={teacher.id}>
+                          {teacher.name || teacher.email}
+                        </option>
+                      ))}
+                    </select>
+
                     <button
                       type="submit"
                       disabled={isCreateClassSubmitting}
@@ -1555,6 +2457,9 @@ export default function Home() {
                           <p className="mt-1 text-xs text-[#632567]/75">
                             {studentsInClass.length} student{studentsInClass.length === 1 ? "" : "s"}
                           </p>
+                          <p className="mt-1 text-xs text-[#632567]/75">
+                            Teacher: {classRecord.teacherName || "Not assigned"}
+                          </p>
                         </button>
 
                         <div className="flex items-center gap-2">
@@ -1578,7 +2483,7 @@ export default function Home() {
 
                       {isExpanded ? (
                         <>
-                          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
                             <div>
                               <label className="mb-2 block text-xs uppercase tracking-wide text-[#632567]/75">
                                 Class name
@@ -1593,6 +2498,30 @@ export default function Home() {
                               />
                             </div>
 
+                            <div>
+                              <label className="mb-2 block text-xs uppercase tracking-wide text-[#632567]/75">
+                                Class teacher
+                              </label>
+                              <select
+                                className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
+                                value={edit.teacherId}
+                                onChange={(event) =>
+                                  handleClassEditField(
+                                    classRecord.id,
+                                    "teacherId",
+                                    event.target.value,
+                                  )
+                                }
+                              >
+                                <option value="">No teacher assigned</option>
+                                {teacherUsers.map((teacher) => (
+                                  <option key={`${classRecord.id}-teacher-${teacher.id}`} value={teacher.id}>
+                                    {teacher.name || teacher.email}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
                             <button
                               type="button"
                               onClick={() => void handleSaveClass(classRecord.id)}
@@ -1601,6 +2530,67 @@ export default function Home() {
                             >
                               {savingClassId === classRecord.id ? "Saving..." : "Save class"}
                             </button>
+                          </div>
+
+                          <div className="mt-4 rounded-lg border border-[#632567]/30 bg-white p-3">
+                            <p className="text-xs uppercase tracking-wide text-[#632567]/75">
+                              Subjects
+                            </p>
+
+                            <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+                              <input
+                                type="text"
+                                value={newSubjectNameByClass[classRecord.id] ?? ""}
+                                onChange={(event) =>
+                                  setNewSubjectNameByClass((previous) => ({
+                                    ...previous,
+                                    [classRecord.id]: event.target.value,
+                                  }))
+                                }
+                                placeholder="Add subject (e.g. Mathematics)"
+                                className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
+                              />
+
+                              <button
+                                type="button"
+                                onClick={() => void handleAddSubjectToClass(classRecord.id)}
+                                disabled={addingSubjectClassId === classRecord.id}
+                                className="rounded-lg bg-[#632567] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#522053] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {addingSubjectClassId === classRecord.id ? "Adding..." : "Add subject"}
+                              </button>
+                            </div>
+
+                            {classRecord.subjects.length === 0 ? (
+                              <p className="mt-2 text-sm text-[#632567]/85">
+                                No subjects added yet.
+                              </p>
+                            ) : (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {classRecord.subjects.map((subject) => (
+                                  <button
+                                    key={`${classRecord.id}-subject-${subject.id}`}
+                                    type="button"
+                                    onClick={() =>
+                                      void handleDeleteSubjectFromClass(
+                                        classRecord.id,
+                                        subject.id,
+                                        subject.name,
+                                      )
+                                    }
+                                    disabled={
+                                      deletingSubjectKey === `${classRecord.id}:${subject.id}`
+                                    }
+                                    className="rounded-lg border border-[#632567]/30 px-3 py-2 text-sm text-[#632567] hover:bg-red-50 hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                    title="Click to delete subject"
+                                  >
+                                    {deletingSubjectKey === `${classRecord.id}:${subject.id}`
+                                      ? "Deleting..."
+                                      : subject.name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
 
                           <div className="mt-4 rounded-lg border border-[#632567]/30 bg-white p-3">

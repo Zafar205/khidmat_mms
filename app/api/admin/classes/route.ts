@@ -1,16 +1,45 @@
-import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import type { User } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const ADMIN_EMAIL = "mohamedalzafar@gmail.com";
-
-type ManagedRole = "teacher" | "student";
 
 type ClassRecord = {
   id: string;
   name: string;
+  teacherId: string;
+  teacherName: string;
   studentIds: string[];
+  subjects: Array<{
+    id: string;
+    name: string;
+  }>;
+};
+
+type StudentRow = {
+  id: string;
+  auth_user_id: string | null;
+  name: string;
+  email: string;
+  class_id: string | null;
+};
+
+type ClassRow = {
+  id: string;
+  name: string;
+  teacher_id: string | null;
+};
+
+type TeacherRow = {
+  id: string;
+  auth_user_id: string | null;
+  name: string;
+};
+
+type SubjectRow = {
+  id: string;
+  class_id: string;
+  name: string;
 };
 
 const getBearerToken = (request: Request) => {
@@ -20,40 +49,6 @@ const getBearerToken = (request: Request) => {
   }
 
   return authorization.slice(7).trim();
-};
-
-const parseClasses = (metadata: User["user_metadata"]): ClassRecord[] => {
-  const rawClasses = (metadata?.classes ?? []) as unknown;
-  if (!Array.isArray(rawClasses)) {
-    return [];
-  }
-
-  return rawClasses
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return null;
-      }
-
-      const record = entry as Record<string, unknown>;
-      const id = typeof record.id === "string" ? record.id.trim() : "";
-      const name = typeof record.name === "string" ? record.name.trim() : "";
-      const studentIds = Array.isArray(record.studentIds)
-        ? record.studentIds
-            .filter((item) => typeof item === "string" && item.trim().length > 0)
-            .map((item) => item.trim())
-        : [];
-
-      if (!id || !name) {
-        return null;
-      }
-
-      return {
-        id,
-        name,
-        studentIds: Array.from(new Set(studentIds)),
-      };
-    })
-    .filter((value): value is ClassRecord => value !== null);
 };
 
 const getAdminAuthContext = async (request: Request) => {
@@ -107,49 +102,91 @@ const getAdminAuthContext = async (request: Request) => {
     },
   });
 
-  const { data, error } = await adminClient.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
-
-  if (error) {
-    return {
-      ok: false as const,
-      status: 400,
-      error: error.message,
-    };
-  }
-
-  const users = data.users ?? [];
-  const adminUser = users.find((user) => user.email === ADMIN_EMAIL);
-
-  if (!adminUser) {
-    return {
-      ok: false as const,
-      status: 404,
-      error: "Admin account not found.",
-    };
-  }
-
-  const studentUsers = users.filter(
-    (user) => user.user_metadata?.role === ("student" satisfies ManagedRole),
-  );
-
   return {
     ok: true as const,
     adminClient,
-    adminUser,
-    studentUsers,
   };
 };
 
-const mapStudent = (student: User) => ({
-  id: student.id,
-  name: (student.user_metadata?.name as string | undefined) ?? "",
-  email: student.email ?? "",
-  classId: (student.user_metadata?.classId as string | undefined) ?? "",
-  className: (student.user_metadata?.className as string | undefined) ?? "",
-});
+const fetchClassesWithStudents = async (adminClient: SupabaseClient) => {
+  const [
+    { data: classesData, error: classesError },
+    { data: studentsData, error: studentsError },
+    { data: teachersData, error: teachersError },
+    { data: subjectsData, error: subjectsError },
+  ] =
+    await Promise.all([
+      adminClient
+        .from("classes")
+        .select("id, name, teacher_id")
+        .order("name", { ascending: true }),
+      adminClient
+        .from("students")
+        .select("id, auth_user_id, name, email, class_id")
+        .order("name", { ascending: true }),
+      adminClient.from("teachers").select("id, auth_user_id, name"),
+      adminClient
+        .from("subjects")
+        .select("id, class_id, name")
+        .order("name", { ascending: true }),
+    ]);
+
+  if (classesError) {
+    throw new Error(classesError.message);
+  }
+
+  if (studentsError) {
+    throw new Error(studentsError.message);
+  }
+
+  if (teachersError) {
+    throw new Error(teachersError.message);
+  }
+
+  if (subjectsError) {
+    throw new Error(subjectsError.message);
+  }
+
+  const classRows = (classesData ?? []) as ClassRow[];
+  const studentRows = (studentsData ?? []) as StudentRow[];
+  const teacherRows = (teachersData ?? []) as TeacherRow[];
+  const subjectRows = (subjectsData ?? []) as SubjectRow[];
+  const classNameById = new Map(classRows.map((item) => [item.id, item.name]));
+  const teacherById = new Map(teacherRows.map((teacher) => [teacher.id, teacher]));
+  const subjectsByClassId = new Map<string, Array<{ id: string; name: string }>>();
+
+  for (const subject of subjectRows) {
+    const existing = subjectsByClassId.get(subject.class_id) ?? [];
+    existing.push({ id: subject.id, name: subject.name });
+    subjectsByClassId.set(subject.class_id, existing);
+  }
+
+  const classes: ClassRecord[] = classRows.map((classRow) => ({
+    id: classRow.id,
+    name: classRow.name,
+    teacherId:
+      classRow.teacher_id && teacherById.get(classRow.teacher_id)?.auth_user_id
+        ? (teacherById.get(classRow.teacher_id)?.auth_user_id as string)
+        : "",
+    teacherName: classRow.teacher_id
+      ? teacherById.get(classRow.teacher_id)?.name ?? ""
+      : "",
+    studentIds: studentRows
+      .filter((student) => student.class_id === classRow.id)
+      .map((student) => student.auth_user_id ?? student.id),
+    subjects: subjectsByClassId.get(classRow.id) ?? [],
+  }));
+
+  const students = studentRows.map((student) => ({
+    id: student.auth_user_id ?? student.id,
+    name: student.name,
+    email: student.email,
+    classId: student.class_id ?? "",
+    className: student.class_id ? classNameById.get(student.class_id) ?? "" : "",
+  }));
+
+  return { classes, students };
+};
 
 export async function GET(request: Request) {
   const auth = await getAdminAuthContext(request);
@@ -157,17 +194,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  const classes = parseClasses(auth.adminUser.user_metadata).map((classRecord) => ({
-    ...classRecord,
-    studentIds: classRecord.studentIds.filter((studentId) =>
-      auth.studentUsers.some((student) => student.id === studentId),
-    ),
-  }));
+  try {
+    const result = await fetchClassesWithStudents(auth.adminClient);
 
-  return NextResponse.json({
-    classes,
-    students: auth.studentUsers.map(mapStudent),
-  });
+    return NextResponse.json(result);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to load classes." },
+      { status: 400 },
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -178,51 +214,66 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as {
     name?: string;
+    teacherId?: string;
   };
 
   const name = (body.name ?? "").trim();
+  const teacherId = (body.teacherId ?? "").trim();
+
   if (!name) {
     return NextResponse.json({ error: "Class name is required." }, { status: 400 });
   }
 
-  const classes = parseClasses(auth.adminUser.user_metadata);
-  const hasDuplicate = classes.some(
-    (existingClass) => existingClass.name.toLowerCase() === name.toLowerCase(),
-  );
+  const insertPayload: { name: string; teacher_id?: string | null } = { name };
+  if (teacherId) {
+    const { data: teacherData, error: teacherLookupError } = await auth.adminClient
+      .from("teachers")
+      .select("id")
+      .eq("auth_user_id", teacherId)
+      .maybeSingle();
 
-  if (hasDuplicate) {
-    return NextResponse.json({ error: "Class already exists." }, { status: 400 });
+    if (teacherLookupError) {
+      return NextResponse.json({ error: teacherLookupError.message }, { status: 400 });
+    }
+
+    if (!teacherData) {
+      return NextResponse.json({ error: "Selected teacher not found." }, { status: 400 });
+    }
+
+    insertPayload.teacher_id = teacherData.id as string;
   }
 
-  const nextClasses: ClassRecord[] = [
-    ...classes,
-    {
-      id: randomUUID(),
-      name,
-      studentIds: [],
-    },
-  ];
+  const { error } = await auth.adminClient
+    .from("classes")
+    .insert(insertPayload)
+    .select("id")
+    .single();
 
-  const existingMetadata = (auth.adminUser.user_metadata ?? {}) as Record<string, unknown>;
-  const { data, error } = await auth.adminClient.auth.admin.updateUserById(auth.adminUser.id, {
-    user_metadata: {
-      ...existingMetadata,
-      classes: nextClasses,
-    },
-  });
-
-  if (error || !data.user) {
+  if (error) {
+    const duplicate = error.code === "23505";
     return NextResponse.json(
-      { error: error?.message ?? "Failed to create class." },
+      { error: duplicate ? "Class already exists." : error.message },
       { status: 400 },
     );
   }
 
-  return NextResponse.json(
-    {
-      message: "Class created.",
-      classes: nextClasses,
-    },
-    { status: 201 },
-  );
+  try {
+    const result = await fetchClassesWithStudents(auth.adminClient);
+
+    return NextResponse.json(
+      {
+        message: "Class created.",
+        ...result,
+      },
+      { status: 201 },
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        message: "Class created.",
+        error: error instanceof Error ? error.message : "Failed to reload classes.",
+      },
+      { status: 201 },
+    );
+  }
 }

@@ -14,6 +14,24 @@ type AcademicRecord = {
   attendanceTotal: number;
 };
 
+type StudentTableRow = {
+  id: string;
+  auth_user_id: string | null;
+  name: string;
+  email: string;
+  class_id: string | null;
+  academic_year: string;
+  attendance_present: number;
+  attendance_total: number;
+};
+
+type TeacherTableRow = {
+  id: string;
+  auth_user_id: string | null;
+  name: string;
+  email: string;
+};
+
 const toBoundedNumber = (value: unknown, min: number, max: number) => {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return min;
@@ -24,9 +42,7 @@ const toBoundedNumber = (value: unknown, min: number, max: number) => {
 
 const mapAcademicRecord = (metadata: User["user_metadata"]): AcademicRecord => {
   const academic = (metadata?.academic ?? {}) as Record<string, unknown>;
-  const monthly = Array.isArray(academic.monthlyTests)
-    ? academic.monthlyTests
-    : [];
+  const monthly = Array.isArray(academic.monthlyTests) ? academic.monthlyTests : [];
 
   return {
     academicYear:
@@ -46,17 +62,27 @@ const mapAcademicRecord = (metadata: User["user_metadata"]): AcademicRecord => {
   };
 };
 
-const mapManagedUser = (user: User) => ({
-  id: user.id,
-  email: user.email ?? "",
-  role: user.user_metadata?.role as ManagedRole,
-  name: (user.user_metadata?.name as string | undefined) ?? "",
-  classId: (user.user_metadata?.classId as string | undefined) ?? "",
-  className: (user.user_metadata?.className as string | undefined) ?? "",
-  plainPassword:
-    (user.user_metadata?.password_plain as string | undefined) ?? "",
-  academic: mapAcademicRecord(user.user_metadata),
-});
+const mapAcademicFromStudentRow = (student: StudentTableRow | undefined): AcademicRecord => {
+  if (!student) {
+    return {
+      academicYear: "2025-2026",
+      monthlyTests: [0, 0, 0, 0],
+      midTerm: 0,
+      finalTerm: 0,
+      attendancePresent: 0,
+      attendanceTotal: 0,
+    };
+  }
+
+  return {
+    academicYear: student.academic_year,
+    monthlyTests: [0, 0, 0, 0],
+    midTerm: 0,
+    finalTerm: 0,
+    attendancePresent: Number(student.attendance_present ?? 0),
+    attendanceTotal: Number(student.attendance_total ?? 0),
+  };
+};
 
 const getBearerToken = (request: Request) => {
   const authorization = request.headers.get("authorization") ?? "";
@@ -130,18 +156,77 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  const { data, error } = await auth.adminClient.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
+  const [{ data: usersData, error: usersError }, { data: studentRows, error: studentsError }, { data: teacherRows, error: teachersError }, { data: classRows, error: classesError }] =
+    await Promise.all([
+      auth.adminClient.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+      auth.adminClient
+        .from("students")
+        .select(
+          "id, auth_user_id, name, email, class_id, academic_year, attendance_present, attendance_total",
+        ),
+      auth.adminClient.from("teachers").select("id, auth_user_id, name, email"),
+      auth.adminClient.from("classes").select("id, name"),
+    ]);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  if (usersError) {
+    return NextResponse.json({ error: usersError.message }, { status: 400 });
   }
 
-  const users = (data.users ?? [])
-    .filter((user) => user.user_metadata?.role === "teacher" || user.user_metadata?.role === "student")
-    .map(mapManagedUser);
+  if (studentsError) {
+    return NextResponse.json({ error: studentsError.message }, { status: 400 });
+  }
+
+  if (teachersError) {
+    return NextResponse.json({ error: teachersError.message }, { status: 400 });
+  }
+
+  if (classesError) {
+    return NextResponse.json({ error: classesError.message }, { status: 400 });
+  }
+
+  const studentByAuthId = new Map(
+    ((studentRows ?? []) as StudentTableRow[])
+      .filter((row) => row.auth_user_id)
+      .map((row) => [row.auth_user_id as string, row]),
+  );
+
+  const teacherByAuthId = new Map(
+    ((teacherRows ?? []) as TeacherTableRow[])
+      .filter((row) => row.auth_user_id)
+      .map((row) => [row.auth_user_id as string, row]),
+  );
+
+  const classNameById = new Map(
+    (classRows ?? []).map((row) => [row.id as string, row.name as string]),
+  );
+
+  const users = (usersData.users ?? [])
+    .filter(
+      (user) => user.user_metadata?.role === "teacher" || user.user_metadata?.role === "student",
+    )
+    .map((user) => {
+      const role = user.user_metadata?.role as ManagedRole;
+      const teacherRow = teacherByAuthId.get(user.id);
+      const studentRow = studentByAuthId.get(user.id);
+      const academic =
+        role === "student"
+          ? mapAcademicFromStudentRow(studentRow) ?? mapAcademicRecord(user.user_metadata)
+          : mapAcademicRecord(user.user_metadata);
+      const classId = role === "student" ? studentRow?.class_id ?? "" : "";
+
+      return {
+        id: user.id,
+        email: user.email ?? (role === "student" ? studentRow?.email ?? "" : teacherRow?.email ?? ""),
+        role,
+        name:
+          (role === "student" ? studentRow?.name : teacherRow?.name) ??
+          ((user.user_metadata?.name as string | undefined) ?? ""),
+        classId,
+        className: classId ? classNameById.get(classId) ?? "" : "",
+        plainPassword: (user.user_metadata?.password_plain as string | undefined) ?? "",
+        academic,
+      };
+    });
 
   return NextResponse.json({ users });
 }
@@ -201,5 +286,59 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "User was not created." }, { status: 400 });
   }
 
-  return NextResponse.json({ user: mapManagedUser(data.user) }, { status: 201 });
+  const createdUser = data.user;
+
+  if (role === "teacher") {
+    const { error: insertTeacherError } = await auth.adminClient.from("teachers").insert({
+      auth_user_id: createdUser.id,
+      name,
+      email,
+    });
+
+    if (insertTeacherError) {
+      await auth.adminClient.auth.admin.deleteUser(createdUser.id);
+      return NextResponse.json({ error: insertTeacherError.message }, { status: 400 });
+    }
+  }
+
+  if (role === "student") {
+    const { error: insertStudentError } = await auth.adminClient.from("students").insert({
+      auth_user_id: createdUser.id,
+      name,
+      email,
+      academic_year: "2025-2026",
+      attendance_present: 0,
+      attendance_total: 0,
+    });
+
+    if (insertStudentError) {
+      await auth.adminClient.auth.admin.deleteUser(createdUser.id);
+      return NextResponse.json({ error: insertStudentError.message }, { status: 400 });
+    }
+  }
+
+  const academic: AcademicRecord = {
+    academicYear: "2025-2026",
+    monthlyTests: [0, 0, 0, 0],
+    midTerm: 0,
+    finalTerm: 0,
+    attendancePresent: 0,
+    attendanceTotal: 0,
+  };
+
+  return NextResponse.json(
+    {
+      user: {
+        id: createdUser.id,
+        email,
+        role,
+        name,
+        classId: "",
+        className: "",
+        plainPassword: password,
+        academic,
+      },
+    },
+    { status: 201 },
+  );
 }

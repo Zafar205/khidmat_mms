@@ -1,71 +1,33 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import type { User } from "@supabase/supabase-js";
 
 type UserRole = "admin" | "teacher" | "student";
 
-type AcademicRecord = {
-  academicYear: string;
-  monthlyTests: [number, number, number, number];
-  midTerm: number;
-  finalTerm: number;
-  attendancePresent: number;
-  attendanceTotal: number;
-
+type StudentRow = {
+  id: string;
+  auth_user_id: string | null;
+  name: string;
+  email: string;
+  class_id: string | null;
+  academic_year: string;
+  attendance_present: number;
+  attendance_total: number;
 };
 
-const toBoundedNumber = (value: unknown, min: number, max: number) => {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return min;
-  }
-
-  return Math.min(max, Math.max(min, value));
+type StudentMarkRow = {
+  student_id: string;
+  subject_id: string;
+  monthly_test_1: number;
+  monthly_test_2: number;
+  monthly_test_3: number;
+  monthly_test_4: number;
+  mid_term: number;
+  final_term: number;
 };
 
-const mapAcademicRecord = (metadata: User["user_metadata"]): AcademicRecord => {
-  const academic = (metadata?.academic ?? {}) as Record<string, unknown>;
-  const monthly = Array.isArray(academic.monthlyTests)
-    ? academic.monthlyTests
-    : [];
-
-  return {
-    academicYear:
-      typeof academic.academicYear === "string" && academic.academicYear.trim()
-        ? academic.academicYear
-        : "2025-2026",
-    monthlyTests: [
-      toBoundedNumber(monthly[0], 0, 100),
-      toBoundedNumber(monthly[1], 0, 100),
-      toBoundedNumber(monthly[2], 0, 100),
-      toBoundedNumber(monthly[3], 0, 100),
-    ],
-    midTerm: toBoundedNumber(academic.midTerm, 0, 100),
-    finalTerm: toBoundedNumber(academic.finalTerm, 0, 100),
-    attendancePresent: toBoundedNumber(academic.attendancePresent, 0, 1000),
-    attendanceTotal: toBoundedNumber(academic.attendanceTotal, 0, 1000),
-  };
-};
-
-const buildAssessmentList = (academic: AcademicRecord) => [
-  ...academic.monthlyTests,
-  academic.midTerm,
-  academic.finalTerm,
-];
-
-const calculateOverallPercent = (academic: AcademicRecord) => {
-  const allAssessments = buildAssessmentList(academic);
-  const total = allAssessments.reduce((sum, score) => sum + score, 0);
-  return Number((total / allAssessments.length).toFixed(2));
-};
-
-const calculateAttendancePercent = (academic: AcademicRecord) => {
-  if (academic.attendanceTotal <= 0) {
-    return 0;
-  }
-
-  return Number(
-    ((academic.attendancePresent / academic.attendanceTotal) * 100).toFixed(2),
-  );
+type SubjectRow = {
+  id: string;
+  name: string;
 };
 
 const getBearerToken = (request: Request) => {
@@ -75,6 +37,15 @@ const getBearerToken = (request: Request) => {
   }
 
   return authorization.slice(7).trim();
+};
+
+const avg = (values: number[]) => {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return Number((total / values.length).toFixed(2));
 };
 
 export async function GET(request: Request) {
@@ -122,82 +93,174 @@ export async function GET(request: Request) {
     },
   });
 
-  const { data, error } = await adminClient.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
+  const { data: targetStudentData, error: targetStudentError } = await adminClient
+    .from("students")
+    .select("id, auth_user_id, name, email, class_id, academic_year, attendance_present, attendance_total")
+    .eq("auth_user_id", requestedStudentId)
+    .maybeSingle();
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
+  if (targetStudentError) {
+    return NextResponse.json({ error: targetStudentError.message }, { status: 400 });
   }
 
-  const users = data.users ?? [];
-  const studentUsers = users.filter((user) => user.user_metadata?.role === "student");
-  const targetStudent = studentUsers.find((user) => user.id === requestedStudentId);
-
-  if (!targetStudent) {
+  if (!targetStudentData) {
     return NextResponse.json({ error: "Student not found." }, { status: 404 });
   }
 
-  const studentAcademic = mapAcademicRecord(targetStudent.user_metadata);
-  const studentOverallPercent = calculateOverallPercent(studentAcademic);
-  const studentAttendancePercent = calculateAttendancePercent(studentAcademic);
-  const studentClassId =
-    (targetStudent.user_metadata?.classId as string | undefined)?.trim() ?? "";
-  const studentClassName =
-    (targetStudent.user_metadata?.className as string | undefined)?.trim() ?? "";
+  const student = targetStudentData as StudentRow;
+  const classId = student.class_id ?? "";
 
-  const classCohort = studentClassId
-    ? studentUsers.filter(
-        (student) =>
-          ((student.user_metadata?.classId as string | undefined)?.trim() ?? "") ===
-          studentClassId,
-      )
-    : studentUsers;
-
-  const classRecords = classCohort.map((student) => mapAcademicRecord(student.user_metadata));
-  const classCount = classRecords.length;
-
-  const classMonthlyAverages: [number, number, number, number] = [0, 0, 0, 0];
-  let classMidTerm = 0;
-  let classFinalTerm = 0;
-  let classOverall = 0;
-  let classAttendance = 0;
-
-  for (const record of classRecords) {
-    classMonthlyAverages[0] += record.monthlyTests[0];
-    classMonthlyAverages[1] += record.monthlyTests[1];
-    classMonthlyAverages[2] += record.monthlyTests[2];
-    classMonthlyAverages[3] += record.monthlyTests[3];
-    classMidTerm += record.midTerm;
-    classFinalTerm += record.finalTerm;
-    classOverall += calculateOverallPercent(record);
-    classAttendance += calculateAttendancePercent(record);
+  let className = "";
+  if (classId) {
+    const { data: classData } = await adminClient
+      .from("classes")
+      .select("name")
+      .eq("id", classId)
+      .maybeSingle();
+    className = (classData?.name as string | undefined) ?? "";
   }
 
-  const average = (value: number) =>
-    classCount === 0 ? 0 : Number((value / classCount).toFixed(2));
+  const [subjectsResult, studentMarksResult] = await Promise.all([
+    classId
+      ? adminClient.from("subjects").select("id, name").eq("class_id", classId).order("name", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+    adminClient
+      .from("student_marks")
+      .select(
+        "student_id, subject_id, monthly_test_1, monthly_test_2, monthly_test_3, monthly_test_4, mid_term, final_term",
+      )
+      .eq("student_id", student.id),
+  ]);
 
-  const classSummary = {
-    className: studentClassName || "All Students",
-    studentsCount: classCount,
-    monthlyTests: classMonthlyAverages.map(average),
-    midTerm: average(classMidTerm),
-    finalTerm: average(classFinalTerm),
-    overallPercent: average(classOverall),
-    attendancePercent: average(classAttendance),
+  if (subjectsResult.error) {
+    return NextResponse.json({ error: subjectsResult.error.message }, { status: 400 });
+  }
+
+  if (studentMarksResult.error) {
+    return NextResponse.json({ error: studentMarksResult.error.message }, { status: 400 });
+  }
+
+  const subjects = (subjectsResult.data ?? []) as SubjectRow[];
+  const studentMarks = (studentMarksResult.data ?? []) as StudentMarkRow[];
+  const studentMarkBySubject = new Map(studentMarks.map((row) => [row.subject_id, row]));
+
+  const subjectMarks = subjects.map((subject) => {
+    const mark = studentMarkBySubject.get(subject.id);
+
+    return {
+      subjectId: subject.id,
+      subjectName: subject.name,
+      monthlyTest1: Number(mark?.monthly_test_1 ?? 0),
+      monthlyTest2: Number(mark?.monthly_test_2 ?? 0),
+      monthlyTest3: Number(mark?.monthly_test_3 ?? 0),
+      monthlyTest4: Number(mark?.monthly_test_4 ?? 0),
+      midTerm: Number(mark?.mid_term ?? 0),
+      finalTerm: Number(mark?.final_term ?? 0),
+    };
+  });
+
+  const monthlyTests: [number, number, number, number] = [
+    avg(subjectMarks.map((mark) => mark.monthlyTest1)),
+    avg(subjectMarks.map((mark) => mark.monthlyTest2)),
+    avg(subjectMarks.map((mark) => mark.monthlyTest3)),
+    avg(subjectMarks.map((mark) => mark.monthlyTest4)),
+  ];
+
+  const midTerm = avg(subjectMarks.map((mark) => mark.midTerm));
+  const finalTerm = avg(subjectMarks.map((mark) => mark.finalTerm));
+  const overallPercent = avg([...monthlyTests, midTerm, finalTerm]);
+
+  const attendancePercent =
+    student.attendance_total > 0
+      ? Number(((student.attendance_present / student.attendance_total) * 100).toFixed(2))
+      : 0;
+
+  let classSummary = {
+    className: className || "All Students",
+    studentsCount: 0,
+    monthlyTests: [0, 0, 0, 0],
+    midTerm: 0,
+    finalTerm: 0,
+    overallPercent: 0,
+    attendancePercent: 0,
   };
+
+  if (classId) {
+    const { data: classStudentsData, error: classStudentsError } = await adminClient
+      .from("students")
+      .select("id, attendance_present, attendance_total")
+      .eq("class_id", classId);
+
+    if (classStudentsError) {
+      return NextResponse.json({ error: classStudentsError.message }, { status: 400 });
+    }
+
+    const classStudents = classStudentsData ?? [];
+    const classStudentIds = classStudents.map((row) => row.id as string);
+
+    const { data: classMarksData, error: classMarksError } = classStudentIds.length
+      ? await adminClient
+          .from("student_marks")
+          .select(
+            "student_id, subject_id, monthly_test_1, monthly_test_2, monthly_test_3, monthly_test_4, mid_term, final_term",
+          )
+          .in("student_id", classStudentIds)
+      : { data: [], error: null };
+
+    if (classMarksError) {
+      return NextResponse.json({ error: classMarksError.message }, { status: 400 });
+    }
+
+    const classMarks = (classMarksData ?? []) as StudentMarkRow[];
+
+    const classMonthly: [number, number, number, number] = [
+      avg(classMarks.map((row) => Number(row.monthly_test_1 ?? 0))),
+      avg(classMarks.map((row) => Number(row.monthly_test_2 ?? 0))),
+      avg(classMarks.map((row) => Number(row.monthly_test_3 ?? 0))),
+      avg(classMarks.map((row) => Number(row.monthly_test_4 ?? 0))),
+    ];
+
+    const classMid = avg(classMarks.map((row) => Number(row.mid_term ?? 0)));
+    const classFinal = avg(classMarks.map((row) => Number(row.final_term ?? 0)));
+    const classOverall = avg([...classMonthly, classMid, classFinal]);
+
+    const classAttendancePercent = avg(
+      classStudents.map((row) => {
+        const present = Number(row.attendance_present ?? 0);
+        const total = Number(row.attendance_total ?? 0);
+        return total > 0 ? (present / total) * 100 : 0;
+      }),
+    );
+
+    classSummary = {
+      className: className || "All Students",
+      studentsCount: classStudents.length,
+      monthlyTests: classMonthly,
+      midTerm: classMid,
+      finalTerm: classFinal,
+      overallPercent: classOverall,
+      attendancePercent: Number(classAttendancePercent.toFixed(2)),
+    };
+  }
 
   return NextResponse.json({
     student: {
-      id: targetStudent.id,
-      name: (targetStudent.user_metadata?.name as string | undefined) ?? "",
-      email: targetStudent.email ?? "",
-      classId: studentClassId,
-      className: studentClassName,
-      academic: studentAcademic,
-      overallPercent: studentOverallPercent,
-      attendancePercent: studentAttendancePercent,
+      id: student.auth_user_id ?? student.id,
+      name: student.name,
+      email: student.email,
+      classId,
+      className,
+      academic: {
+        academicYear: student.academic_year,
+        monthlyTests,
+        midTerm,
+        finalTerm,
+        attendancePresent: Number(student.attendance_present ?? 0),
+        attendanceTotal: Number(student.attendance_total ?? 0),
+      },
+      overallPercent,
+      attendancePercent,
+      subjectMarks,
     },
     classSummary,
   });
