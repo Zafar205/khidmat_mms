@@ -107,6 +107,12 @@ type TeacherStudent = {
   }>;
 };
 
+type TeacherAssignableStudent = {
+  id: string;
+  name: string;
+  email: string;
+};
+
 type TeacherStudentMarkEdit = {
   subjectId: string;
   subjectName: string;
@@ -139,6 +145,7 @@ type TeacherStudentsResponse = {
     name: string;
   }>;
   students: TeacherStudent[];
+  assignableStudents?: TeacherAssignableStudent[];
 };
 
 type StudentSubjectMarkEdit = {
@@ -303,6 +310,15 @@ export default function Home() {
     Record<string, TeacherStudentEditState>
   >({});
   const [editingTeacherStudentId, setEditingTeacherStudentId] = useState("");
+  const [teacherAssignableStudents, setTeacherAssignableStudents] = useState<
+    TeacherAssignableStudent[]
+  >([]);
+  const [teacherStudentSearch, setTeacherStudentSearch] = useState("");
+  const [assigningTeacherStudentId, setAssigningTeacherStudentId] = useState("");
+  const [teacherNewStudentName, setTeacherNewStudentName] = useState("");
+  const [teacherNewStudentEmail, setTeacherNewStudentEmail] = useState("");
+  const [teacherNewStudentPassword, setTeacherNewStudentPassword] = useState("");
+  const [isCreatingTeacherStudent, setIsCreatingTeacherStudent] = useState(false);
 
   useEffect(() => {
     const fetchSession = async () => {
@@ -606,6 +622,7 @@ export default function Home() {
       setTeacherName(data.teacherName ?? "");
       setTeacherMessage(data.message ?? "");
       setTeacherStudents(students);
+      setTeacherAssignableStudents(data.assignableStudents ?? []);
 
       const nextEdits: Record<string, TeacherStudentEditState> = {};
       for (const student of students) {
@@ -635,6 +652,7 @@ export default function Home() {
       setTeacherClassAssigned(false);
       setTeacherClassName("");
       setTeacherStudents([]);
+      setTeacherAssignableStudents([]);
     } finally {
       setLoadingTeacherStudents(false);
     }
@@ -1356,6 +1374,64 @@ export default function Home() {
     }
   };
 
+  const handleAssignStudentToTeacherClass = async (studentId: string) => {
+    setTeacherError("");
+    setTeacherMessage("");
+    setAssigningTeacherStudentId(studentId);
+
+    try {
+      const response = (await callTeacherApi("/api/teacher/students", {
+        method: "POST",
+        body: JSON.stringify({ studentId }),
+      })) as {
+        message?: string;
+      };
+
+      setTeacherStudentSearch("");
+      await loadTeacherStudents();
+      setTeacherMessage(response.message ?? "Student assigned to your class.");
+    } catch (error) {
+      setTeacherError(
+        error instanceof Error ? error.message : "Unable to assign student to your class.",
+      );
+    } finally {
+      setAssigningTeacherStudentId("");
+    }
+  };
+
+  const handleCreateTeacherStudent = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    setTeacherError("");
+    setTeacherMessage("");
+    setIsCreatingTeacherStudent(true);
+
+    try {
+      const response = (await callTeacherApi("/api/teacher/students/create", {
+        method: "POST",
+        body: JSON.stringify({
+          name: teacherNewStudentName,
+          email: teacherNewStudentEmail,
+          password: teacherNewStudentPassword,
+        }),
+      })) as {
+        message?: string;
+      };
+
+      setTeacherNewStudentName("");
+      setTeacherNewStudentEmail("");
+      setTeacherNewStudentPassword("");
+      await loadTeacherStudents();
+      setTeacherMessage(response.message ?? "Student created and assigned to your class.");
+    } catch (error) {
+      setTeacherError(
+        error instanceof Error ? error.message : "Unable to create student.",
+      );
+    } finally {
+      setIsCreatingTeacherStudent(false);
+    }
+  };
+
   if (loadingSession) {
     return (
       <div className="min-h-screen bg-[#632567] text-white grid place-items-center px-6">
@@ -1526,6 +1602,12 @@ export default function Home() {
   }
 
   if (currentRole === "teacher") {
+    const teacherSearchQuery = teacherStudentSearch.trim().toLowerCase();
+    const filteredTeacherAssignableStudents = teacherAssignableStudents.filter((student) => {
+      const label = `${student.name} ${student.email}`.toLowerCase();
+      return teacherSearchQuery ? label.includes(teacherSearchQuery) : true;
+    });
+
     return (
       <div className="min-h-screen bg-[#632567] text-white py-6 px-3 sm:px-6 lg:px-10">
         <main className="w-full rounded-2xl border border-white/40 bg-white p-4 text-[#632567] shadow-2xl sm:p-6">
@@ -1583,6 +1665,119 @@ export default function Home() {
               <p className="mt-2 text-sm text-[#632567]/85">
                 No class is assigned to you.
               </p>
+            </section>
+          ) : null}
+
+          {!loadingTeacherStudents && teacherClassAssigned ? (
+            <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
+              <h2 className="text-xl font-semibold">Create Student</h2>
+              <p className="mt-1 text-sm text-[#632567]/85">
+                Create a student account and automatically assign it to your class.
+              </p>
+
+              <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={handleCreateTeacherStudent}>
+                <div>
+                  <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                    Student name
+                  </label>
+                  <input
+                    type="text"
+                    value={teacherNewStudentName}
+                    onChange={(event) => setTeacherNewStudentName(event.target.value)}
+                    placeholder="Student name"
+                    className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                    Student email
+                  </label>
+                  <input
+                    type="email"
+                    value={teacherNewStudentEmail}
+                    onChange={(event) => setTeacherNewStudentEmail(event.target.value)}
+                    placeholder="student@example.com"
+                    className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs uppercase tracking-wide text-[#632567]/75">
+                    Temporary password
+                  </label>
+                  <input
+                    type="password"
+                    value={teacherNewStudentPassword}
+                    onChange={(event) => setTeacherNewStudentPassword(event.target.value)}
+                    placeholder="At least 6 characters"
+                    minLength={6}
+                    className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
+                    required
+                  />
+                </div>
+
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    disabled={isCreatingTeacherStudent}
+                    className="rounded-lg bg-[#632567] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#522053] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isCreatingTeacherStudent ? "Creating..." : "Create student"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          ) : null}
+
+          {!loadingTeacherStudents && teacherClassAssigned ? (
+            <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
+              <h2 className="text-xl font-semibold">Assign Students</h2>
+              <p className="mt-1 text-sm text-[#632567]/85">
+                Add unassigned students to your class.
+              </p>
+
+              <input
+                type="text"
+                value={teacherStudentSearch}
+                onChange={(event) => setTeacherStudentSearch(event.target.value)}
+                placeholder="Search students by name or email"
+                className="mt-3 w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
+              />
+
+              {teacherAssignableStudents.length === 0 ? (
+                <p className="mt-2 text-sm text-[#632567]/85">
+                  No unassigned students are available.
+                </p>
+              ) : !teacherSearchQuery ? (
+                <p className="mt-2 text-sm text-[#632567]/85">
+                  Start typing to search students.
+                </p>
+              ) : filteredTeacherAssignableStudents.length === 0 ? (
+                <p className="mt-2 text-sm text-[#632567]/85">No students match your search.</p>
+              ) : (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {filteredTeacherAssignableStudents.map((student) => (
+                    <div
+                      key={`teacher-assign-${student.id}`}
+                      className="rounded-lg border border-[#632567]/20 px-3 py-2"
+                    >
+                      <p className="text-sm font-medium text-[#632567]">{student.name}</p>
+                      <p className="mt-0.5 text-xs text-[#632567]/75 break-all">{student.email}</p>
+                      <button
+                        type="button"
+                        onClick={() => void handleAssignStudentToTeacherClass(student.id)}
+                        disabled={assigningTeacherStudentId === student.id}
+                        className="mt-2 rounded-lg bg-[#632567] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#522053] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {assigningTeacherStudentId === student.id ? "Adding..." : "Add to class"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           ) : null}
 

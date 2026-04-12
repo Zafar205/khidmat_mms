@@ -25,6 +25,17 @@ type StudentRow = {
   attendance_total: number;
 };
 
+type AssignableStudentRow = {
+  auth_user_id: string | null;
+  name: string;
+  email: string;
+};
+
+type StudentClassRow = {
+  id: string;
+  class_id: string | null;
+};
+
 type StudentMarkRow = {
   student_id: string;
   subject_id: string;
@@ -136,8 +147,11 @@ export async function GET(request: Request) {
 
   const classRecord = classData as ClassRow;
 
-  const [{ data: subjectsData, error: subjectsError }, { data: studentsData, error: studentsError }] =
-    await Promise.all([
+  const [
+    { data: subjectsData, error: subjectsError },
+    { data: studentsData, error: studentsError },
+    { data: assignableStudentsData, error: assignableStudentsError },
+  ] = await Promise.all([
       adminClient
         .from("subjects")
         .select("id, name")
@@ -148,6 +162,11 @@ export async function GET(request: Request) {
         .select("id, auth_user_id, name, email, attendance_present, attendance_total")
         .eq("class_id", classRecord.id)
         .order("name", { ascending: true }),
+      adminClient
+        .from("students")
+        .select("auth_user_id, name, email")
+        .is("class_id", null)
+        .order("name", { ascending: true }),
     ]);
 
   if (subjectsError) {
@@ -156,6 +175,10 @@ export async function GET(request: Request) {
 
   if (studentsError) {
     return NextResponse.json({ error: studentsError.message }, { status: 400 });
+  }
+
+  if (assignableStudentsError) {
+    return NextResponse.json({ error: assignableStudentsError.message }, { status: 400 });
   }
 
   const subjects = (subjectsData ?? []) as SubjectRow[];
@@ -207,11 +230,142 @@ export async function GET(request: Request) {
       }),
     }));
 
+  const assignableStudents = ((assignableStudentsData ?? []) as AssignableStudentRow[])
+    .filter((student) => typeof student.auth_user_id === "string" && student.auth_user_id.length > 0)
+    .map((student) => ({
+      id: student.auth_user_id as string,
+      name: student.name,
+      email: student.email,
+    }));
+
   return NextResponse.json({
     classAssigned: true,
     teacherName: teacher.name,
     classRecord,
     subjects,
     students,
+    assignableStudents,
   });
+}
+
+export async function POST(request: Request) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+    return NextResponse.json(
+      {
+        error:
+          "Missing Supabase config. Add NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY, and SUPABASE_SERVICE_ROLE_KEY.",
+      },
+      { status: 500 },
+    );
+  }
+
+  const token = getBearerToken(request);
+  if (!token) {
+    return NextResponse.json({ error: "Missing authentication token." }, { status: 401 });
+  }
+
+  const publicClient = createClient(supabaseUrl, anonKey);
+  const { data: userData, error: userError } = await publicClient.auth.getUser(token);
+
+  if (userError || !userData.user) {
+    return NextResponse.json({ error: "Invalid session." }, { status: 401 });
+  }
+
+  if (userData.user.user_metadata?.role !== "teacher") {
+    return NextResponse.json({ error: "Only teacher can access this endpoint." }, { status: 403 });
+  }
+
+  const body = (await request.json().catch(() => ({}))) as {
+    studentId?: string;
+  };
+
+  const studentAuthUserId = typeof body.studentId === "string" ? body.studentId.trim() : "";
+  if (!studentAuthUserId) {
+    return NextResponse.json({ error: "Student id is required." }, { status: 400 });
+  }
+
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+
+  const { data: teacherData, error: teacherError } = await adminClient
+    .from("teachers")
+    .select("id")
+    .eq("auth_user_id", userData.user.id)
+    .maybeSingle();
+
+  if (teacherError) {
+    return NextResponse.json({ error: teacherError.message }, { status: 400 });
+  }
+
+  if (!teacherData) {
+    return NextResponse.json({ error: "No class is assigned to you." }, { status: 403 });
+  }
+
+  const teacher = teacherData as TeacherRow;
+
+  const { data: classData, error: classError } = await adminClient
+    .from("classes")
+    .select("id")
+    .eq("teacher_id", teacher.id)
+    .order("name", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (classError) {
+    return NextResponse.json({ error: classError.message }, { status: 400 });
+  }
+
+  if (!classData) {
+    return NextResponse.json({ error: "No class is assigned to you." }, { status: 403 });
+  }
+
+  const classRecord = classData as ClassRow;
+
+  const { data: studentData, error: studentError } = await adminClient
+    .from("students")
+    .select("id, class_id")
+    .eq("auth_user_id", studentAuthUserId)
+    .maybeSingle();
+
+  if (studentError) {
+    return NextResponse.json({ error: studentError.message }, { status: 400 });
+  }
+
+  if (!studentData) {
+    return NextResponse.json({ error: "Student not found." }, { status: 404 });
+  }
+
+  const student = studentData as StudentClassRow;
+
+  if (student.class_id === classRecord.id) {
+    return NextResponse.json({ message: "Student is already assigned to your class." });
+  }
+
+  if (student.class_id !== null) {
+    return NextResponse.json(
+      { error: "Student is already assigned to another class." },
+      { status: 409 },
+    );
+  }
+
+  const { error: updateError } = await adminClient
+    .from("students")
+    .update({ class_id: classRecord.id })
+    .eq("id", student.id);
+
+  if (updateError) {
+    return NextResponse.json({ error: updateError.message }, { status: 400 });
+  }
+
+  return NextResponse.json({ message: "Student assigned to your class." });
 }
