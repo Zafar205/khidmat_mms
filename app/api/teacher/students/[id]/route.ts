@@ -231,3 +231,120 @@ export async function PATCH(
 
   return NextResponse.json({ message: "Student subject marks updated." });
 }
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY ??
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+    return NextResponse.json(
+      {
+        error:
+          "Missing Supabase config. Add NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY, and SUPABASE_SERVICE_ROLE_KEY.",
+      },
+      { status: 500 },
+    );
+  }
+
+  const token = getBearerToken(request);
+  if (!token) {
+    return NextResponse.json({ error: "Missing authentication token." }, { status: 401 });
+  }
+
+  const publicClient = createClient(supabaseUrl, anonKey);
+  const { data: userData, error: userError } = await publicClient.auth.getUser(token);
+
+  if (userError || !userData.user) {
+    return NextResponse.json({ error: "Invalid session." }, { status: 401 });
+  }
+
+  if (userData.user.user_metadata?.role !== "teacher") {
+    return NextResponse.json({ error: "Only teacher can remove students." }, { status: 403 });
+  }
+
+  const { id: studentAuthUserId } = await context.params;
+  if (!studentAuthUserId) {
+    return NextResponse.json({ error: "Student id is required." }, { status: 400 });
+  }
+
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+
+  const { data: teacherData, error: teacherError } = await adminClient
+    .from("teachers")
+    .select("id")
+    .eq("auth_user_id", userData.user.id)
+    .maybeSingle();
+
+  if (teacherError) {
+    return NextResponse.json({ error: teacherError.message }, { status: 400 });
+  }
+
+  if (!teacherData) {
+    return NextResponse.json({ error: "No class is assigned to you." }, { status: 403 });
+  }
+
+  const teacher = teacherData as TeacherRow;
+
+  const { data: classData, error: classError } = await adminClient
+    .from("classes")
+    .select("id")
+    .eq("teacher_id", teacher.id)
+    .order("name", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (classError) {
+    return NextResponse.json({ error: classError.message }, { status: 400 });
+  }
+
+  if (!classData) {
+    return NextResponse.json({ error: "No class is assigned to you." }, { status: 403 });
+  }
+
+  const classRecord = classData as ClassRow;
+
+  const { data: studentData, error: studentError } = await adminClient
+    .from("students")
+    .select("id, class_id")
+    .eq("auth_user_id", studentAuthUserId)
+    .maybeSingle();
+
+  if (studentError) {
+    return NextResponse.json({ error: studentError.message }, { status: 400 });
+  }
+
+  if (!studentData) {
+    return NextResponse.json({ error: "Student not found." }, { status: 404 });
+  }
+
+  const student = studentData as StudentRow;
+
+  if (student.class_id !== classRecord.id) {
+    return NextResponse.json(
+      { error: "You can only remove students from your assigned class." },
+      { status: 403 },
+    );
+  }
+
+  const { error: unassignError } = await adminClient
+    .from("students")
+    .update({ class_id: null })
+    .eq("id", student.id);
+
+  if (unassignError) {
+    return NextResponse.json({ error: unassignError.message }, { status: 400 });
+  }
+
+  return NextResponse.json({ message: "Student removed from your class." });
+}

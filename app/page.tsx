@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 
@@ -175,6 +176,57 @@ type StudentMarksResponse = {
   }>;
 };
 
+type ClassSummary = {
+  classId: string;
+  className: string;
+  teacherName: string;
+  studentsCount: number;
+  generatedAt: string;
+  classAverages: {
+    monthlyTests: [number, number, number, number];
+    midTerm: number;
+    finalTerm: number;
+    overallPercent: number;
+    attendancePercent: number;
+    passRate: number;
+  };
+  topStudents: Array<{
+    rank: number;
+    studentId: string;
+    studentName: string;
+    email: string;
+    monthlyAverage: number;
+    midTerm: number;
+    finalTerm: number;
+    overallPercent: number;
+    attendancePercent: number;
+  }>;
+  studentRankings: Array<{
+    rank: number;
+    studentId: string;
+    studentName: string;
+    email: string;
+    monthlyAverage: number;
+    midTerm: number;
+    finalTerm: number;
+    overallPercent: number;
+    attendancePercent: number;
+  }>;
+  subjectSummaries: Array<{
+    subjectId: string;
+    subjectName: string;
+    monthlyTests: [number, number, number, number];
+    midTerm: number;
+    finalTerm: number;
+    overallPercent: number;
+    topStudents: Array<{
+      rank: number;
+      studentName: string;
+      overallPercent: number;
+    }>;
+  }>;
+};
+
 const ADMIN_EMAIL = "mohamedalzafar@gmail.com";
 const ADMIN_PASSWORD = "123456";
 
@@ -187,6 +239,192 @@ const roleLabel: Record<UserRole, string> = {
   admin: "Admin",
   teacher: "Teacher",
   student: "Student",
+};
+
+const formatPercent = (value: number) => `${Number(value.toFixed(2))}%`;
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const buildSummaryPrintHtml = (summary: ClassSummary) => {
+  const studentRows = summary.studentRankings
+    .map(
+      (student) => `
+        <tr>
+          <td>${student.rank}</td>
+          <td>${escapeHtml(student.studentName)}</td>
+          <td>${escapeHtml(student.email)}</td>
+          <td>${formatPercent(student.monthlyAverage)}</td>
+          <td>${formatPercent(student.midTerm)}</td>
+          <td>${formatPercent(student.finalTerm)}</td>
+          <td>${formatPercent(student.overallPercent)}</td>
+          <td>${formatPercent(student.attendancePercent)}</td>
+        </tr>`,
+    )
+    .join("");
+
+  const subjectRows = summary.subjectSummaries
+    .map((subject) => {
+      const topStudentsLabel =
+        subject.topStudents.length === 0
+          ? "No ranking data"
+          : subject.topStudents
+              .map(
+                (student) =>
+                  `#${student.rank} ${escapeHtml(student.studentName)} (${formatPercent(student.overallPercent)})`,
+              )
+              .join(", ");
+
+      return `
+        <tr>
+          <td>${escapeHtml(subject.subjectName)}</td>
+          <td>${formatPercent(subject.monthlyTests[0])}</td>
+          <td>${formatPercent(subject.monthlyTests[1])}</td>
+          <td>${formatPercent(subject.monthlyTests[2])}</td>
+          <td>${formatPercent(subject.monthlyTests[3])}</td>
+          <td>${formatPercent(subject.midTerm)}</td>
+          <td>${formatPercent(subject.finalTerm)}</td>
+          <td>${formatPercent(subject.overallPercent)}</td>
+          <td>${topStudentsLabel}</td>
+        </tr>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Class Summary - ${escapeHtml(summary.className)}</title>
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 24px;
+        color: #1b1b1b;
+      }
+
+      h1, h2 {
+        margin: 0;
+      }
+
+      .meta {
+        margin-top: 8px;
+        color: #444;
+      }
+
+      .cards {
+        margin-top: 16px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(120px, 1fr));
+        gap: 10px;
+      }
+
+      .card {
+        border: 1px solid #d1d1d1;
+        border-radius: 8px;
+        padding: 10px;
+      }
+
+      .card-title {
+        font-size: 12px;
+        color: #555;
+        margin-bottom: 4px;
+      }
+
+      .card-value {
+        font-size: 20px;
+        font-weight: bold;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+
+      th,
+      td {
+        border: 1px solid #d9d9d9;
+        padding: 8px;
+        font-size: 12px;
+        text-align: left;
+      }
+
+      th {
+        background: #f4f4f4;
+      }
+
+      section {
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(summary.className)} - Class Summary</h1>
+    <p class="meta">Teacher: ${escapeHtml(summary.teacherName || "Not assigned")}</p>
+    <p class="meta">Students: ${summary.studentsCount}</p>
+    <p class="meta">Generated: ${new Date(summary.generatedAt).toLocaleString()}</p>
+
+    <div class="cards">
+      <div class="card"><div class="card-title">MT 1 Avg</div><div class="card-value">${formatPercent(summary.classAverages.monthlyTests[0])}</div></div>
+      <div class="card"><div class="card-title">MT 2 Avg</div><div class="card-value">${formatPercent(summary.classAverages.monthlyTests[1])}</div></div>
+      <div class="card"><div class="card-title">MT 3 Avg</div><div class="card-value">${formatPercent(summary.classAverages.monthlyTests[2])}</div></div>
+      <div class="card"><div class="card-title">MT 4 Avg</div><div class="card-value">${formatPercent(summary.classAverages.monthlyTests[3])}</div></div>
+      <div class="card"><div class="card-title">Mid-term Avg</div><div class="card-value">${formatPercent(summary.classAverages.midTerm)}</div></div>
+      <div class="card"><div class="card-title">Final-term Avg</div><div class="card-value">${formatPercent(summary.classAverages.finalTerm)}</div></div>
+      <div class="card"><div class="card-title">Overall Avg</div><div class="card-value">${formatPercent(summary.classAverages.overallPercent)}</div></div>
+      <div class="card"><div class="card-title">Attendance Avg</div><div class="card-value">${formatPercent(summary.classAverages.attendancePercent)}</div></div>
+      <div class="card"><div class="card-title">Pass Rate</div><div class="card-value">${formatPercent(summary.classAverages.passRate)}</div></div>
+    </div>
+
+    <section>
+      <h2>Class Ranking</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th>
+            <th>Student</th>
+            <th>Email</th>
+            <th>MT Avg</th>
+            <th>Mid</th>
+            <th>Final</th>
+            <th>Overall</th>
+            <th>Attendance</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${studentRows || '<tr><td colspan="8">No students found.</td></tr>'}
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Subject-wise Summary</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Subject</th>
+            <th>MT 1</th>
+            <th>MT 2</th>
+            <th>MT 3</th>
+            <th>MT 4</th>
+            <th>Mid</th>
+            <th>Final</th>
+            <th>Overall</th>
+            <th>Top Ranked</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${subjectRows || '<tr><td colspan="9">No subjects found.</td></tr>'}
+        </tbody>
+      </table>
+    </section>
+  </body>
+</html>`;
 };
 
 const toScoreString = (value: number) => value.toString();
@@ -241,6 +479,258 @@ const NotificationBanner = ({
   </div>
 );
 
+type ClassSummaryCardProps = {
+  summary: ClassSummary;
+  onPrint: () => void;
+  onDownloadPdf: () => void;
+};
+
+const ClassSummaryCard = ({
+  summary,
+  onPrint,
+  onDownloadPdf,
+}: ClassSummaryCardProps) => (
+  <div className="mt-4 rounded-xl border border-[#632567]/30 bg-white p-4">
+    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h3 className="text-lg font-semibold text-[#632567]">{summary.className} Summary</h3>
+        <p className="mt-1 text-xs text-[#632567]/80">
+          Teacher: {summary.teacherName || "Not assigned"} | Students: {summary.studentsCount}
+        </p>
+        <p className="mt-1 text-xs text-[#632567]/80">
+          Generated: {new Date(summary.generatedAt).toLocaleString()}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onDownloadPdf}
+          className="rounded-lg bg-[#632567] px-3 py-2 text-sm font-medium text-white hover:bg-[#522053]"
+        >
+          Download PDF
+        </button>
+        <button
+          type="button"
+          onClick={onPrint}
+          className="rounded-lg border border-[#632567]/50 px-3 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+        >
+          Print summary
+        </button>
+      </div>
+    </div>
+
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">MT 1 Avg</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.monthlyTests[0])}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">MT 2 Avg</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.monthlyTests[1])}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">MT 3 Avg</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.monthlyTests[2])}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">MT 4 Avg</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.monthlyTests[3])}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Mid-term Avg</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.midTerm)}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Final-term Avg</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.finalTerm)}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Overall Avg</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.overallPercent)}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Attendance Avg</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.attendancePercent)}
+        </p>
+      </div>
+      <div className="rounded-lg border border-[#632567]/20 p-3">
+        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Pass Rate</p>
+        <p className="mt-1 text-xl font-semibold text-[#632567]">
+          {formatPercent(summary.classAverages.passRate)}
+        </p>
+      </div>
+    </div>
+
+    <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
+      <h4 className="text-sm font-semibold text-[#632567]">Top Ranked Students</h4>
+      {summary.topStudents.length === 0 ? (
+        <p className="mt-2 text-sm text-[#632567]/85">No students found in this class.</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[720px] border-collapse text-sm">
+            <thead>
+              <tr className="text-left text-[#632567]/80">
+                <th className="border-b border-[#632567]/25 px-2 py-2">Rank</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Student</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Email</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Overall</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Attendance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.topStudents.map((student) => (
+                <tr key={`${summary.classId}-${student.studentId}-top`}>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">#{student.rank}</td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2 font-medium text-[#632567]">
+                    {student.studentName}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">{student.email}</td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(student.overallPercent)}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(student.attendancePercent)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+
+    <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
+      <h4 className="text-sm font-semibold text-[#632567]">Full Class Ranking</h4>
+      {summary.studentRankings.length === 0 ? (
+        <p className="mt-2 text-sm text-[#632567]/85">No ranking data found.</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[960px] border-collapse text-sm">
+            <thead>
+              <tr className="text-left text-[#632567]/80">
+                <th className="border-b border-[#632567]/25 px-2 py-2">Rank</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Student</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Email</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">MT Avg</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Mid</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Final</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Overall</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Attendance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.studentRankings.map((student) => (
+                <tr key={`${summary.classId}-${student.studentId}-rank`}>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">#{student.rank}</td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2 font-medium text-[#632567]">
+                    {student.studentName}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">{student.email}</td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(student.monthlyAverage)}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(student.midTerm)}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(student.finalTerm)}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2 font-semibold text-[#632567]">
+                    {formatPercent(student.overallPercent)}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(student.attendancePercent)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+
+    <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
+      <h4 className="text-sm font-semibold text-[#632567]">Subject-wise Class Marks</h4>
+      {summary.subjectSummaries.length === 0 ? (
+        <p className="mt-2 text-sm text-[#632567]/85">No subjects found for this class.</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[1020px] border-collapse text-sm">
+            <thead>
+              <tr className="text-left text-[#632567]/80">
+                <th className="border-b border-[#632567]/25 px-2 py-2">Subject</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">MT 1</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">MT 2</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">MT 3</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">MT 4</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Mid</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Final</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Overall</th>
+                <th className="border-b border-[#632567]/25 px-2 py-2">Top Ranked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summary.subjectSummaries.map((subject) => (
+                <tr key={`${summary.classId}-${subject.subjectId}`}>
+                  <td className="border-b border-[#632567]/15 px-2 py-2 font-medium text-[#632567]">
+                    {subject.subjectName}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(subject.monthlyTests[0])}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(subject.monthlyTests[1])}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(subject.monthlyTests[2])}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(subject.monthlyTests[3])}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(subject.midTerm)}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2">
+                    {formatPercent(subject.finalTerm)}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2 font-semibold text-[#632567]">
+                    {formatPercent(subject.overallPercent)}
+                  </td>
+                  <td className="border-b border-[#632567]/15 px-2 py-2 text-xs">
+                    {subject.topStudents.length === 0
+                      ? "No ranking data"
+                      : subject.topStudents
+                          .map(
+                            (student) =>
+                              `#${student.rank} ${student.studentName} (${formatPercent(student.overallPercent)})`,
+                          )
+                          .join(", ")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  </div>
+);
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -273,6 +763,10 @@ export default function Home() {
   const [studentReportError, setStudentReportError] = useState("");
   const [loadingStudentReport, setLoadingStudentReport] = useState(false);
   const [classes, setClasses] = useState<ClassRecord[]>([]);
+  const [adminClassSummaries, setAdminClassSummaries] = useState<Record<string, ClassSummary>>(
+    {},
+  );
+  const [loadingAdminClassSummaryId, setLoadingAdminClassSummaryId] = useState("");
   const [classEdits, setClassEdits] = useState<Record<string, ClassEditState>>({});
   const [newClassName, setNewClassName] = useState("");
   const [newClassTeacherId, setNewClassTeacherId] = useState("");
@@ -287,6 +781,7 @@ export default function Home() {
   const [newSubjectNameByClass, setNewSubjectNameByClass] = useState<Record<string, string>>({});
   const [addingSubjectClassId, setAddingSubjectClassId] = useState("");
   const [deletingSubjectKey, setDeletingSubjectKey] = useState("");
+  const [removingStudentKey, setRemovingStudentKey] = useState("");
   const [studentSubjectMarks, setStudentSubjectMarks] = useState<
     Record<
       string,
@@ -302,6 +797,10 @@ export default function Home() {
   const [teacherClassName, setTeacherClassName] = useState("");
   const [teacherName, setTeacherName] = useState("");
   const [teacherClassAssigned, setTeacherClassAssigned] = useState(false);
+  const [teacherSubjects, setTeacherSubjects] = useState<Array<{ id: string; name: string }>>([]);
+  const [teacherNewSubjectName, setTeacherNewSubjectName] = useState("");
+  const [addingTeacherSubject, setAddingTeacherSubject] = useState(false);
+  const [deletingTeacherSubjectId, setDeletingTeacherSubjectId] = useState("");
   const [teacherMessage, setTeacherMessage] = useState("");
   const [teacherError, setTeacherError] = useState("");
   const [loadingTeacherStudents, setLoadingTeacherStudents] = useState(false);
@@ -310,11 +809,7 @@ export default function Home() {
     Record<string, TeacherStudentEditState>
   >({});
   const [editingTeacherStudentId, setEditingTeacherStudentId] = useState("");
-  const [teacherAssignableStudents, setTeacherAssignableStudents] = useState<
-    TeacherAssignableStudent[]
-  >([]);
-  const [teacherStudentSearch, setTeacherStudentSearch] = useState("");
-  const [assigningTeacherStudentId, setAssigningTeacherStudentId] = useState("");
+  const [removingTeacherStudentId, setRemovingTeacherStudentId] = useState("");
   const [teacherNewStudentName, setTeacherNewStudentName] = useState("");
   const [teacherNewStudentEmail, setTeacherNewStudentEmail] = useState("");
   const [teacherNewStudentPassword, setTeacherNewStudentPassword] = useState("");
@@ -518,6 +1013,7 @@ export default function Home() {
       const classList = result.classes ?? [];
       setClasses(classList);
       applyClassEditsFromList(classList);
+      setAdminClassSummaries({});
     } catch (error) {
       setClassesError(
         error instanceof Error ? error.message : "Unable to load classes.",
@@ -604,8 +1100,309 @@ export default function Home() {
     [session?.access_token],
   );
 
-  const loadTeacherStudents = useCallback(async () => {
-    setLoadingTeacherStudents(true);
+  const fetchClassSummary = useCallback(
+    async (classId?: string) => {
+      const token = session?.access_token;
+      if (!token) {
+        throw new Error("You are not authenticated.");
+      }
+
+      const query = classId ? `?classId=${encodeURIComponent(classId)}` : "";
+      const response = await fetch(`/api/class-summary${query}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const responseData = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        summary?: ClassSummary;
+      };
+
+      if (!response.ok || !responseData.summary) {
+        throw new Error(responseData.error ?? "Unable to load class summary.");
+      }
+
+      return responseData.summary;
+    },
+    [session?.access_token],
+  );
+
+  const loadAdminClassSummary = useCallback(
+    async (classId: string) => {
+      setLoadingAdminClassSummaryId(classId);
+      setClassesError("");
+
+      try {
+        const summary = await fetchClassSummary(classId);
+        setAdminClassSummaries((previous) => ({
+          ...previous,
+          [classId]: summary,
+        }));
+      } catch (error) {
+        setClassesError(
+          error instanceof Error ? error.message : "Unable to load class summary.",
+        );
+      } finally {
+        setLoadingAdminClassSummaryId("");
+      }
+    },
+    [fetchClassSummary],
+  );
+
+  const handlePrintClassSummary = useCallback(
+    (summary: ClassSummary, source: "teacher" | "admin") => {
+      const printWindow = window.open(
+        "",
+        "_blank",
+        "noopener,noreferrer,width=1100,height=800",
+      );
+
+      if (!printWindow) {
+        const message =
+          "Unable to open print preview. Please allow pop-ups for this site.";
+        if (source === "teacher") {
+          setTeacherError(message);
+        } else {
+          setClassesError(message);
+        }
+        return;
+      }
+
+      printWindow.document.open();
+      printWindow.document.write(buildSummaryPrintHtml(summary));
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+    },
+    [],
+  );
+
+  const handleDownloadClassSummaryPdf = useCallback(
+    async (summary: ClassSummary, source: "teacher" | "admin") => {
+      try {
+        const [{ jsPDF }, autoTableModule] = await Promise.all([
+          import("jspdf"),
+          import("jspdf-autotable"),
+        ]);
+
+        const autoTable = autoTableModule.default as (
+          doc: unknown,
+          options: Record<string, unknown>,
+        ) => void;
+
+        const doc = new jsPDF({
+          orientation: "landscape",
+          unit: "pt",
+          format: "a4",
+        });
+
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const marginLeft = 36;
+        const marginRight = 36;
+        let currentY = 40;
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(18);
+        doc.setTextColor(64, 25, 67);
+        doc.text(`${summary.className} - Class Summary`, marginLeft, currentY, {
+          maxWidth: pageWidth - marginLeft - marginRight,
+        });
+
+        currentY += 22;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(11);
+        doc.setTextColor(71, 85, 105);
+        doc.text(
+          `Teacher: ${summary.teacherName || "Not assigned"} | Students: ${summary.studentsCount}`,
+          marginLeft,
+          currentY,
+        );
+
+        currentY += 16;
+        doc.text(
+          `Generated: ${new Date(summary.generatedAt).toLocaleString()}`,
+          marginLeft,
+          currentY,
+        );
+
+        currentY += 18;
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: marginLeft, right: marginRight },
+          head: [["Metric", "Value"]],
+          body: [
+            ["MT 1 Avg", formatPercent(summary.classAverages.monthlyTests[0])],
+            ["MT 2 Avg", formatPercent(summary.classAverages.monthlyTests[1])],
+            ["MT 3 Avg", formatPercent(summary.classAverages.monthlyTests[2])],
+            ["MT 4 Avg", formatPercent(summary.classAverages.monthlyTests[3])],
+            ["Mid-term Avg", formatPercent(summary.classAverages.midTerm)],
+            ["Final-term Avg", formatPercent(summary.classAverages.finalTerm)],
+            ["Overall Avg", formatPercent(summary.classAverages.overallPercent)],
+            ["Attendance Avg", formatPercent(summary.classAverages.attendancePercent)],
+            ["Pass Rate", formatPercent(summary.classAverages.passRate)],
+          ],
+          styles: { fontSize: 10, cellPadding: 5 },
+          headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
+          theme: "grid",
+        });
+
+        currentY =
+          (
+            doc as unknown as {
+              lastAutoTable?: {
+                finalY: number;
+              };
+            }
+          ).lastAutoTable?.finalY ??
+          currentY + 80;
+
+        currentY += 20;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(13);
+        doc.setTextColor(64, 25, 67);
+        doc.text("Top Ranked Students", marginLeft, currentY);
+
+        currentY += 8;
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: marginLeft, right: marginRight },
+          head: [["Rank", "Student", "Email", "Overall", "Attendance"]],
+          body:
+            summary.topStudents.length > 0
+              ? summary.topStudents.map((student) => [
+                  `#${student.rank}`,
+                  student.studentName,
+                  student.email,
+                  formatPercent(student.overallPercent),
+                  formatPercent(student.attendancePercent),
+                ])
+              : [["-", "No students found", "", "", ""]],
+          styles: { fontSize: 9.5, cellPadding: 4 },
+          headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
+          theme: "grid",
+        });
+
+        currentY =
+          (
+            doc as unknown as {
+              lastAutoTable?: {
+                finalY: number;
+              };
+            }
+          ).lastAutoTable?.finalY ??
+          currentY + 80;
+
+        currentY += 20;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(13);
+        doc.setTextColor(64, 25, 67);
+        doc.text("Full Class Ranking", marginLeft, currentY);
+
+        currentY += 8;
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: marginLeft, right: marginRight },
+          head: [["Rank", "Student", "Email", "MT Avg", "Mid", "Final", "Overall", "Attendance"]],
+          body:
+            summary.studentRankings.length > 0
+              ? summary.studentRankings.map((student) => [
+                  `#${student.rank}`,
+                  student.studentName,
+                  student.email,
+                  formatPercent(student.monthlyAverage),
+                  formatPercent(student.midTerm),
+                  formatPercent(student.finalTerm),
+                  formatPercent(student.overallPercent),
+                  formatPercent(student.attendancePercent),
+                ])
+              : [["-", "No ranking data", "", "", "", "", "", ""]],
+          styles: { fontSize: 9, cellPadding: 4 },
+          headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
+          theme: "grid",
+        });
+
+        currentY =
+          (
+            doc as unknown as {
+              lastAutoTable?: {
+                finalY: number;
+              };
+            }
+          ).lastAutoTable?.finalY ??
+          currentY + 80;
+
+        currentY += 20;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(13);
+        doc.setTextColor(64, 25, 67);
+        doc.text("Subject-wise Class Summary", marginLeft, currentY);
+
+        currentY += 8;
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: marginLeft, right: marginRight },
+          head: [["Subject", "MT 1", "MT 2", "MT 3", "MT 4", "Mid", "Final", "Overall", "Top Ranked"]],
+          body:
+            summary.subjectSummaries.length > 0
+              ? summary.subjectSummaries.map((subject) => [
+                  subject.subjectName,
+                  formatPercent(subject.monthlyTests[0]),
+                  formatPercent(subject.monthlyTests[1]),
+                  formatPercent(subject.monthlyTests[2]),
+                  formatPercent(subject.monthlyTests[3]),
+                  formatPercent(subject.midTerm),
+                  formatPercent(subject.finalTerm),
+                  formatPercent(subject.overallPercent),
+                  subject.topStudents.length === 0
+                    ? "No ranking data"
+                    : subject.topStudents
+                        .map(
+                          (student) =>
+                            `#${student.rank} ${student.studentName} (${formatPercent(student.overallPercent)})`,
+                        )
+                        .join(", "),
+                ])
+              : [["No subjects found", "", "", "", "", "", "", "", ""]],
+          styles: { fontSize: 8.5, cellPadding: 4 },
+          headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
+          columnStyles: {
+            8: { cellWidth: 220 },
+          },
+          theme: "grid",
+        });
+
+        const normalizedClassName = summary.className
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "");
+        const generatedDate = new Date(summary.generatedAt);
+        const dateToken = [
+          generatedDate.getFullYear(),
+          String(generatedDate.getMonth() + 1).padStart(2, "0"),
+          String(generatedDate.getDate()).padStart(2, "0"),
+        ].join("-");
+
+        doc.save(`${normalizedClassName || "class"}-summary-${dateToken}.pdf`);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unable to generate PDF summary.";
+        if (source === "teacher") {
+          setTeacherError(message);
+        } else {
+          setClassesError(message);
+        }
+      }
+    },
+    [],
+  );
+
+  const loadTeacherStudents = useCallback(async (options?: { showLoader?: boolean }) => {
+    const showLoader = options?.showLoader ?? true;
+    if (showLoader) {
+      setLoadingTeacherStudents(true);
+    }
     setTeacherError("");
 
     try {
@@ -621,8 +1418,8 @@ export default function Home() {
       setTeacherClassName(data.classRecord?.name ?? "");
       setTeacherName(data.teacherName ?? "");
       setTeacherMessage(data.message ?? "");
+      setTeacherSubjects(data.subjects ?? []);
       setTeacherStudents(students);
-      setTeacherAssignableStudents(data.assignableStudents ?? []);
 
       const nextEdits: Record<string, TeacherStudentEditState> = {};
       for (const student of students) {
@@ -651,10 +1448,12 @@ export default function Home() {
       );
       setTeacherClassAssigned(false);
       setTeacherClassName("");
+      setTeacherSubjects([]);
       setTeacherStudents([]);
-      setTeacherAssignableStudents([]);
     } finally {
-      setLoadingTeacherStudents(false);
+      if (showLoader) {
+        setLoadingTeacherStudents(false);
+      }
     }
   }, [callTeacherApi]);
 
@@ -1016,6 +1815,56 @@ export default function Home() {
     });
   };
 
+  const handleRemoveStudentFromClass = async (
+    classId: string,
+    studentId: string,
+    studentLabel: string,
+  ) => {
+    const classRecord = classes.find((entry) => entry.id === classId);
+    const edit = classEdits[classId] ?? (classRecord ? getClassEditState(classRecord) : null);
+    if (!edit) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Remove student "${studentLabel}" from this class?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const nextStudentIds = edit.studentIds.filter((id) => id !== studentId);
+    if (nextStudentIds.length === edit.studentIds.length) {
+      return;
+    }
+
+    const studentKey = `${classId}:${studentId}`;
+    setClassesError("");
+    setClassesMessage("");
+    setRemovingStudentKey(studentKey);
+
+    try {
+      await callAdminApi(`/api/admin/classes/${classId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: edit.name,
+          teacherId: edit.teacherId,
+          studentIds: nextStudentIds,
+        }),
+      });
+
+      setClassesMessage("Student removed from class.");
+      await loadClasses();
+      await loadManagedUsers();
+    } catch (error) {
+      setClassesError(
+        error instanceof Error ? error.message : "Unable to remove student from class.",
+      );
+    } finally {
+      setRemovingStudentKey("");
+    }
+  };
+
   const handleSaveClass = async (classId: string) => {
     const edit = classEdits[classId];
     if (!edit) {
@@ -1374,28 +2223,39 @@ export default function Home() {
     }
   };
 
-  const handleAssignStudentToTeacherClass = async (studentId: string) => {
+  const handleRemoveStudentFromTeacherClass = async (student: TeacherStudent) => {
+    const studentLabel = student.name || student.email;
+    const confirmed = window.confirm(
+      `Remove student "${studentLabel}" from your class?`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
     setTeacherError("");
     setTeacherMessage("");
-    setAssigningTeacherStudentId(studentId);
+    setRemovingTeacherStudentId(student.id);
 
     try {
-      const response = (await callTeacherApi("/api/teacher/students", {
-        method: "POST",
-        body: JSON.stringify({ studentId }),
+      const response = (await callTeacherApi(`/api/teacher/students/${student.id}`, {
+        method: "DELETE",
       })) as {
         message?: string;
       };
 
-      setTeacherStudentSearch("");
-      await loadTeacherStudents();
-      setTeacherMessage(response.message ?? "Student assigned to your class.");
+      if (editingTeacherStudentId === student.id) {
+        setEditingTeacherStudentId("");
+      }
+
+      await loadTeacherStudents({ showLoader: false });
+      setTeacherMessage(response.message ?? "Student removed from your class.");
     } catch (error) {
       setTeacherError(
-        error instanceof Error ? error.message : "Unable to assign student to your class.",
+        error instanceof Error ? error.message : "Unable to remove student from your class.",
       );
     } finally {
-      setAssigningTeacherStudentId("");
+      setRemovingTeacherStudentId("");
     }
   };
 
@@ -1421,7 +2281,7 @@ export default function Home() {
       setTeacherNewStudentName("");
       setTeacherNewStudentEmail("");
       setTeacherNewStudentPassword("");
-      await loadTeacherStudents();
+      await loadTeacherStudents({ showLoader: false });
       setTeacherMessage(response.message ?? "Student created and assigned to your class.");
     } catch (error) {
       setTeacherError(
@@ -1429,6 +2289,65 @@ export default function Home() {
       );
     } finally {
       setIsCreatingTeacherStudent(false);
+    }
+  };
+
+  const handleAddTeacherSubject = async () => {
+    const name = teacherNewSubjectName.trim();
+    if (!name) {
+      setTeacherError("Subject name is required.");
+      return;
+    }
+
+    setTeacherError("");
+    setTeacherMessage("");
+    setAddingTeacherSubject(true);
+
+    try {
+      const response = (await callTeacherApi("/api/teacher/subjects", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      })) as {
+        message?: string;
+      };
+
+      setTeacherNewSubjectName("");
+      await loadTeacherStudents({ showLoader: false });
+      setTeacherMessage(response.message ?? "Subject added.");
+    } catch (error) {
+      setTeacherError(
+        error instanceof Error ? error.message : "Unable to add subject.",
+      );
+    } finally {
+      setAddingTeacherSubject(false);
+    }
+  };
+
+  const handleDeleteTeacherSubject = async (subjectId: string, subjectName: string) => {
+    const confirmed = window.confirm(`Delete subject "${subjectName}" from your class?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setTeacherError("");
+    setTeacherMessage("");
+    setDeletingTeacherSubjectId(subjectId);
+
+    try {
+      const response = (await callTeacherApi(`/api/teacher/subjects/${subjectId}`, {
+        method: "DELETE",
+      })) as {
+        message?: string;
+      };
+
+      await loadTeacherStudents({ showLoader: false });
+      setTeacherMessage(response.message ?? "Subject deleted.");
+    } catch (error) {
+      setTeacherError(
+        error instanceof Error ? error.message : "Unable to delete subject.",
+      );
+    } finally {
+      setDeletingTeacherSubjectId("");
     }
   };
 
@@ -1602,12 +2521,6 @@ export default function Home() {
   }
 
   if (currentRole === "teacher") {
-    const teacherSearchQuery = teacherStudentSearch.trim().toLowerCase();
-    const filteredTeacherAssignableStudents = teacherAssignableStudents.filter((student) => {
-      const label = `${student.name} ${student.email}`.toLowerCase();
-      return teacherSearchQuery ? label.includes(teacherSearchQuery) : true;
-    });
-
     return (
       <div className="min-h-screen bg-[#632567] text-white py-6 px-3 sm:px-6 lg:px-10">
         <main className="w-full rounded-2xl border border-white/40 bg-white p-4 text-[#632567] shadow-2xl sm:p-6">
@@ -1629,6 +2542,12 @@ export default function Home() {
               >
                 Refresh
               </button>
+              <Link
+                href="/summary"
+                className="rounded-lg border border-[#632567]/50 px-4 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+              >
+                Summary
+              </Link>
               <button
                 type="button"
                 className="rounded-lg border border-[#632567]/50 px-4 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
@@ -1734,47 +2653,49 @@ export default function Home() {
 
           {!loadingTeacherStudents && teacherClassAssigned ? (
             <section className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5">
-              <h2 className="text-xl font-semibold">Assign Students</h2>
+              <h2 className="text-xl font-semibold">Class Subjects</h2>
               <p className="mt-1 text-sm text-[#632567]/85">
-                Add unassigned students to your class.
+                Create and delete subjects for your assigned class.
               </p>
 
-              <input
-                type="text"
-                value={teacherStudentSearch}
-                onChange={(event) => setTeacherStudentSearch(event.target.value)}
-                placeholder="Search students by name or email"
-                className="mt-3 w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
-              />
+              <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+                <input
+                  type="text"
+                  value={teacherNewSubjectName}
+                  onChange={(event) => setTeacherNewSubjectName(event.target.value)}
+                  placeholder="Add subject (e.g. Mathematics)"
+                  className="w-full rounded-lg border border-[#632567]/40 bg-white px-3 py-2.5 text-sm outline-none focus:border-[#632567]"
+                />
 
-              {teacherAssignableStudents.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => void handleAddTeacherSubject()}
+                  disabled={addingTeacherSubject}
+                  className="rounded-lg bg-[#632567] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#522053] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {addingTeacherSubject ? "Adding..." : "Add subject"}
+                </button>
+              </div>
+
+              {teacherSubjects.length === 0 ? (
                 <p className="mt-2 text-sm text-[#632567]/85">
-                  No unassigned students are available.
+                  No subjects added yet.
                 </p>
-              ) : !teacherSearchQuery ? (
-                <p className="mt-2 text-sm text-[#632567]/85">
-                  Start typing to search students.
-                </p>
-              ) : filteredTeacherAssignableStudents.length === 0 ? (
-                <p className="mt-2 text-sm text-[#632567]/85">No students match your search.</p>
               ) : (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {filteredTeacherAssignableStudents.map((student) => (
-                    <div
-                      key={`teacher-assign-${student.id}`}
-                      className="rounded-lg border border-[#632567]/20 px-3 py-2"
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {teacherSubjects.map((subject) => (
+                    <button
+                      key={`teacher-subject-${subject.id}`}
+                      type="button"
+                      onClick={() =>
+                        void handleDeleteTeacherSubject(subject.id, subject.name)
+                      }
+                      disabled={deletingTeacherSubjectId === subject.id}
+                      className="rounded-lg border border-[#632567]/30 px-3 py-2 text-sm text-[#632567] hover:bg-red-50 hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      title="Click to delete subject"
                     >
-                      <p className="text-sm font-medium text-[#632567]">{student.name}</p>
-                      <p className="mt-0.5 text-xs text-[#632567]/75 break-all">{student.email}</p>
-                      <button
-                        type="button"
-                        onClick={() => void handleAssignStudentToTeacherClass(student.id)}
-                        disabled={assigningTeacherStudentId === student.id}
-                        className="mt-2 rounded-lg bg-[#632567] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[#522053] disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {assigningTeacherStudentId === student.id ? "Adding..." : "Add to class"}
-                      </button>
-                    </div>
+                      {deletingTeacherSubjectId === subject.id ? "Deleting..." : subject.name}
+                    </button>
                   ))}
                 </div>
               )}
@@ -1834,17 +2755,32 @@ export default function Home() {
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setEditingTeacherStudentId((previous) =>
-                              previous === student.id ? "" : student.id,
-                            )
-                          }
-                          className="rounded-lg border border-[#632567]/50 px-3 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
-                        >
-                          {isEditing ? "Close" : "Edit"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setEditingTeacherStudentId((previous) =>
+                                previous === student.id ? "" : student.id,
+                              )
+                            }
+                            disabled={removingTeacherStudentId === student.id}
+                            className="rounded-lg border border-[#632567]/50 px-3 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isEditing ? "Close" : "Edit"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveStudentFromTeacherClass(student)}
+                            disabled={
+                              removingTeacherStudentId === student.id ||
+                              savingTeacherStudentId === student.id
+                            }
+                            className="rounded-lg border border-red-500/70 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {removingTeacherStudentId === student.id ? "Removing..." : "Remove"}
+                          </button>
+                        </div>
                       </div>
 
                       {isEditing ? (
@@ -2089,6 +3025,12 @@ export default function Home() {
             >
               Classes
             </button>
+            <Link
+              href="/summary"
+              className="block w-full rounded-lg border border-[#632567]/50 px-3 py-2.5 text-left text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+            >
+              Summary
+            </Link>
             <button
               type="button"
               className="w-full rounded-lg border border-[#632567]/50 px-3 py-2.5 text-left text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
@@ -2644,6 +3586,9 @@ export default function Home() {
                   const studentsInClass = classAssignableStudents.filter((student) =>
                     edit.studentIds.includes(student.id),
                   );
+                  const classSummary = adminClassSummaries[classRecord.id] ?? null;
+                  const loadingClassSummary =
+                    loadingAdminClassSummaryId === classRecord.id;
 
                   return (
                     <article
@@ -2666,6 +3611,36 @@ export default function Home() {
                         </button>
 
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void loadAdminClassSummary(classRecord.id)}
+                            disabled={loadingClassSummary}
+                            className="rounded-lg border border-[#632567]/50 px-4 py-2.5 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {loadingClassSummary ? "Loading..." : "Summary"}
+                          </button>
+                          {classSummary ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void handleDownloadClassSummaryPdf(classSummary, "admin")
+                              }
+                              className="rounded-lg bg-[#632567] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#522053]"
+                            >
+                              Download PDF
+                            </button>
+                          ) : null}
+                          {classSummary ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handlePrintClassSummary(classSummary, "admin")
+                              }
+                              className="rounded-lg border border-[#632567]/50 px-4 py-2.5 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+                            >
+                              Print
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => handleClassRowToggle(classRecord.id)}
@@ -2734,6 +3709,24 @@ export default function Home() {
                               {savingClassId === classRecord.id ? "Saving..." : "Save class"}
                             </button>
                           </div>
+
+                          {classSummary ? (
+                            <ClassSummaryCard
+                              summary={classSummary}
+                              onPrint={() =>
+                                handlePrintClassSummary(classSummary, "admin")
+                              }
+                              onDownloadPdf={() =>
+                                void handleDownloadClassSummaryPdf(classSummary, "admin")
+                              }
+                            />
+                          ) : (
+                            <div className="mt-4 rounded-lg border border-[#632567]/30 bg-white p-3">
+                              <p className="text-sm text-[#632567]/85">
+                                Load summary to view class-wise student marks, rankings, and print report.
+                              </p>
+                            </div>
+                          )}
 
                           <div className="mt-4 rounded-lg border border-[#632567]/30 bg-white p-3">
                             <p className="text-xs uppercase tracking-wide text-[#632567]/75">
@@ -2805,12 +3798,26 @@ export default function Home() {
                             ) : (
                               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                                 {studentsInClass.map((student) => (
-                                  <p
+                                  <button
                                     key={`${classRecord.id}-in-class-${student.id}`}
-                                    className="rounded-lg border border-[#632567]/20 px-3 py-2 text-sm text-[#632567]"
+                                    type="button"
+                                    onClick={() =>
+                                      void handleRemoveStudentFromClass(
+                                        classRecord.id,
+                                        student.id,
+                                        student.name || student.email,
+                                      )
+                                    }
+                                    disabled={
+                                      removingStudentKey === `${classRecord.id}:${student.id}`
+                                    }
+                                    className="rounded-lg border border-[#632567]/20 px-3 py-2 text-left text-sm text-[#632567] hover:bg-red-50 hover:border-red-300 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                    title="Click to remove student from class"
                                   >
-                                    {student.name || student.email}
-                                  </p>
+                                    {removingStudentKey === `${classRecord.id}:${student.id}`
+                                      ? "Removing..."
+                                      : student.name || student.email}
+                                  </button>
                                 ))}
                               </div>
                             )}
