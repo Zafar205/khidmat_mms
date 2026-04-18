@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
@@ -556,7 +556,13 @@ const ClassSummaryCard = ({ summary, onPrint, onDownloadPdf }: ClassSummaryCardP
   </div>
 );
 
-export default function SummaryPage() {
+const SummaryPageFallback = () => (
+  <div className="min-h-screen bg-[#632567] text-white grid place-items-center px-6">
+    <p className="text-white/90">Loading summary...</p>
+  </div>
+);
+
+function SummaryPageContent() {
   const searchParams = useSearchParams();
   const classIdFromQuery = searchParams.get("classId")?.trim() ?? "";
 
@@ -1126,5 +1132,13 @@ export default function SummaryPage() {
         ) : null}
       </main>
     </div>
+  );
+}
+
+export default function SummaryPage() {
+  return (
+    <Suspense fallback={<SummaryPageFallback />}>
+      <SummaryPageContent />
+    </Suspense>
   );
 }
