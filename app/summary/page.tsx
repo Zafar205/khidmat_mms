@@ -7,6 +7,9 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 
 const ADMIN_EMAIL = "mohamedalzafar@gmail.com";
+const SUMMARY_CACHE_PREFIX = "rlps.summary.cache.v1";
+const SUMMARY_CACHE_INVALIDATION_KEY = "rlps.summary.cache.invalidation.v1";
+const SUMMARY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 type UserRole = "admin" | "teacher";
 
@@ -64,6 +67,92 @@ type ClassSummary = {
       overallPercent: number;
     }>;
   }>;
+};
+
+type CachedSummaryPayload = {
+  savedAt: number;
+  invalidationToken: string;
+  summary: ClassSummary;
+};
+
+const getSummaryInvalidationToken = () => {
+  if (typeof window === "undefined") {
+    return "0";
+  }
+
+  return window.localStorage.getItem(SUMMARY_CACHE_INVALIDATION_KEY) ?? "0";
+};
+
+const getSummaryCacheKey = (
+  role: UserRole,
+  classId: string,
+  authUserId: string,
+) =>
+  role === "teacher"
+    ? `${SUMMARY_CACHE_PREFIX}:teacher:${authUserId || "unknown"}`
+    : `${SUMMARY_CACHE_PREFIX}:admin:${classId}`;
+
+const readSummaryFromCache = (
+  role: UserRole,
+  classId: string,
+  authUserId: string,
+) => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const cacheKey = getSummaryCacheKey(role, classId, authUserId);
+    const raw = window.localStorage.getItem(cacheKey);
+    if (!raw) {
+      return null;
+    }
+
+    const payload = JSON.parse(raw) as Partial<CachedSummaryPayload>;
+    if (
+      typeof payload.savedAt !== "number" ||
+      typeof payload.invalidationToken !== "string" ||
+      !payload.summary
+    ) {
+      return null;
+    }
+
+    if (payload.invalidationToken !== getSummaryInvalidationToken()) {
+      return null;
+    }
+
+    if (Date.now() - payload.savedAt > SUMMARY_CACHE_TTL_MS) {
+      return null;
+    }
+
+    return payload.summary as ClassSummary;
+  } catch {
+    return null;
+  }
+};
+
+const writeSummaryToCache = (
+  role: UserRole,
+  classId: string,
+  authUserId: string,
+  summary: ClassSummary,
+) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const payload: CachedSummaryPayload = {
+    savedAt: Date.now(),
+    invalidationToken: getSummaryInvalidationToken(),
+    summary,
+  };
+
+  try {
+    const cacheKey = getSummaryCacheKey(role, classId, authUserId);
+    window.localStorage.setItem(cacheKey, JSON.stringify(payload));
+  } catch {
+    return;
+  }
 };
 
 type NotificationBannerProps = {
@@ -576,14 +665,33 @@ export default function SummaryPage() {
     }
   }, [callAuthedApi, classIdFromQuery]);
 
-  const loadSummary = useCallback(async () => {
+  const loadSummary = useCallback(async (options?: { forceRefresh?: boolean }) => {
     if (!currentRole) {
       return;
     }
 
+    const forceRefresh = options?.forceRefresh ?? false;
+    const summaryClassScope = currentRole === "teacher" ? "assigned" : selectedClassId;
+    const authUserId = session?.user?.id ?? "";
+
     if (currentRole === "admin" && !selectedClassId) {
       setSummary(null);
       return;
+    }
+
+    if (!forceRefresh) {
+      const cachedSummary = readSummaryFromCache(
+        currentRole,
+        summaryClassScope,
+        authUserId,
+      );
+
+      if (cachedSummary) {
+        setSummary(cachedSummary);
+        setSummaryError("");
+        setLoadingSummary(false);
+        return;
+      }
     }
 
     const query =
@@ -601,6 +709,12 @@ export default function SummaryPage() {
       }
 
       setSummary(response.summary);
+      writeSummaryToCache(
+        currentRole,
+        summaryClassScope,
+        authUserId,
+        response.summary,
+      );
     } catch (error) {
       setSummary(null);
       setSummaryError(
@@ -609,7 +723,7 @@ export default function SummaryPage() {
     } finally {
       setLoadingSummary(false);
     }
-  }, [callAuthedApi, currentRole, selectedClassId]);
+  }, [callAuthedApi, currentRole, selectedClassId, session?.user?.id]);
 
   useEffect(() => {
     if (currentRole !== "admin") {
@@ -972,7 +1086,7 @@ export default function SummaryPage() {
                 </select>
                 <button
                   type="button"
-                  onClick={() => void loadSummary()}
+                  onClick={() => void loadSummary({ forceRefresh: true })}
                   disabled={loadingSummary || !selectedClassId}
                   className="rounded-lg border border-[#632567]/50 px-4 py-2.5 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >

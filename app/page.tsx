@@ -229,6 +229,22 @@ type ClassSummary = {
 
 const ADMIN_EMAIL = "mohamedalzafar@gmail.com";
 const ADMIN_PASSWORD = "123456";
+const SUMMARY_CACHE_INVALIDATION_KEY = "rlps.summary.cache.invalidation.v1";
+
+const invalidateSummaryCache = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      SUMMARY_CACHE_INVALIDATION_KEY,
+      Date.now().toString(),
+    );
+  } catch {
+    return;
+  }
+};
 
 const sectionRoleMap: Record<Exclude<AdminSection, "classes">, ManagedRole> = {
   teachers: "teacher",
@@ -2173,6 +2189,7 @@ export default function Home() {
         }),
       });
 
+      invalidateSummaryCache();
       setTeacherMessage("Student subject marks updated.");
 
       setTeacherStudents((previous) =>
@@ -2249,6 +2266,7 @@ export default function Home() {
       }
 
       await loadTeacherStudents({ showLoader: false });
+      invalidateSummaryCache();
       setTeacherMessage(response.message ?? "Student removed from your class.");
     } catch (error) {
       setTeacherError(
@@ -2282,6 +2300,7 @@ export default function Home() {
       setTeacherNewStudentEmail("");
       setTeacherNewStudentPassword("");
       await loadTeacherStudents({ showLoader: false });
+      invalidateSummaryCache();
       setTeacherMessage(response.message ?? "Student created and assigned to your class.");
     } catch (error) {
       setTeacherError(
@@ -2313,6 +2332,7 @@ export default function Home() {
 
       setTeacherNewSubjectName("");
       await loadTeacherStudents({ showLoader: false });
+  invalidateSummaryCache();
       setTeacherMessage(response.message ?? "Subject added.");
     } catch (error) {
       setTeacherError(
@@ -2341,6 +2361,7 @@ export default function Home() {
       };
 
       await loadTeacherStudents({ showLoader: false });
+      invalidateSummaryCache();
       setTeacherMessage(response.message ?? "Subject deleted.");
     } catch (error) {
       setTeacherError(
