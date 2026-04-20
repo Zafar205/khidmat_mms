@@ -47,6 +47,7 @@ type RankedStudent = {
   studentId: string;
   studentName: string;
   email: string;
+  monthlyTests: [number, number, number, number];
   monthlyAverage: number;
   midTerm: number;
   finalTerm: number;
@@ -354,6 +355,7 @@ const buildClassSummary = async (adminClient: SupabaseClient, classId: string) =
     studentId: student.studentId,
     studentName: student.studentName,
     email: student.email,
+    monthlyTests: student.monthlyTests,
     monthlyAverage: student.monthlyAverage,
     midTerm: student.midTerm,
     finalTerm: student.finalTerm,
@@ -379,7 +381,9 @@ const buildClassSummary = async (adminClient: SupabaseClient, classId: string) =
       const overallPercent = avg([...monthlyTests, midTerm, finalTerm]);
 
       return {
+        studentId: student.auth_user_id ?? student.id,
         studentName: student.name,
+        email: student.email,
         monthlyTests,
         midTerm,
         finalTerm,
@@ -412,6 +416,14 @@ const buildClassSummary = async (adminClient: SupabaseClient, classId: string) =
       finalTerm,
       overallPercent,
       topStudents: rankedBySubject,
+      studentMarks: perStudentRows.map((row) => ({
+        studentId: row.studentId,
+        studentName: row.studentName,
+        email: row.email,
+        monthlyTests: row.monthlyTests,
+        midTerm: row.midTerm,
+        finalTerm: row.finalTerm,
+      })),
     };
   });
 

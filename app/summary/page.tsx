@@ -7,7 +7,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 
 const ADMIN_EMAIL = "mohamedalzafar@gmail.com";
-const SUMMARY_CACHE_PREFIX = "rlps.summary.cache.v1";
+const SUMMARY_CACHE_PREFIX = "rlps.summary.cache.v4";
 const SUMMARY_CACHE_INVALIDATION_KEY = "rlps.summary.cache.invalidation.v1";
 const SUMMARY_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -17,6 +17,110 @@ type ClassRecord = {
   id: string;
   name: string;
 };
+
+type StudentSummaryRow = {
+  rank: number;
+  studentId: string;
+  studentName: string;
+  email: string;
+  monthlyTests: [number, number, number, number];
+  monthlyAverage: number;
+  midTerm: number;
+  finalTerm: number;
+  overallPercent: number;
+  attendancePercent: number;
+};
+
+type ExamScoreSource = {
+  monthlyTests?: number[];
+  midTerm: number;
+  finalTerm: number;
+};
+
+type SubjectStudentMark = {
+  studentId: string;
+  studentName: string;
+  email: string;
+  monthlyTests: [number, number, number, number];
+  midTerm: number;
+  finalTerm: number;
+};
+
+type SubjectSummary = {
+  subjectId: string;
+  subjectName: string;
+  monthlyTests: [number, number, number, number];
+  midTerm: number;
+  finalTerm: number;
+  overallPercent: number;
+  topStudents: Array<{
+    rank: number;
+    studentName: string;
+    overallPercent: number;
+  }>;
+  studentMarks?: SubjectStudentMark[];
+};
+
+type ExamKey =
+  | "monthlyTest1"
+  | "monthlyTest2"
+  | "monthlyTest3"
+  | "monthlyTest4"
+  | "midTerm"
+  | "finalTerm";
+
+type ExamTab = {
+  key: ExamKey;
+  label: string;
+};
+
+type ExamRankingRow = {
+  rank: number;
+  studentId: string;
+  studentName: string;
+  email: string;
+  score: number;
+  attendancePercent: number;
+};
+
+type ExamSummaryData = {
+  key: ExamKey;
+  label: string;
+  graded: boolean;
+  average: number;
+  passRate: number;
+  rankings: ExamRankingRow[];
+  topStudents: ExamRankingRow[];
+};
+
+type ExamSubjectColumn = {
+  subjectId: string;
+  subjectName: string;
+};
+
+type ExamStudentSubjectRow = {
+  studentId: string;
+  studentName: string;
+  email: string;
+  marksBySubjectId: Record<string, number>;
+};
+
+type ExamStudentSubjectMatrix = {
+  key: ExamKey;
+  label: string;
+  graded: boolean;
+  subjects: ExamSubjectColumn[];
+  rows: ExamStudentSubjectRow[];
+};
+
+const EXAM_TABS: ExamTab[] = [
+  { key: "monthlyTest1", label: "MT 1" },
+  { key: "monthlyTest2", label: "MT 2" },
+  { key: "monthlyTest3", label: "MT 3" },
+  { key: "monthlyTest4", label: "MT 4" },
+  { key: "midTerm", label: "Mid" },
+  { key: "finalTerm", label: "Final" },
+];
 
 type ClassSummary = {
   classId: string;
@@ -37,36 +141,15 @@ type ClassSummary = {
     studentId: string;
     studentName: string;
     email: string;
-    monthlyAverage: number;
-    midTerm: number;
-    finalTerm: number;
-    overallPercent: number;
-    attendancePercent: number;
-  }>;
-  studentRankings: Array<{
-    rank: number;
-    studentId: string;
-    studentName: string;
-    email: string;
-    monthlyAverage: number;
-    midTerm: number;
-    finalTerm: number;
-    overallPercent: number;
-    attendancePercent: number;
-  }>;
-  subjectSummaries: Array<{
-    subjectId: string;
-    subjectName: string;
     monthlyTests: [number, number, number, number];
+    monthlyAverage: number;
     midTerm: number;
     finalTerm: number;
     overallPercent: number;
-    topStudents: Array<{
-      rank: number;
-      studentName: string;
-      overallPercent: number;
-    }>;
+    attendancePercent: number;
   }>;
+  studentRankings: StudentSummaryRow[];
+  subjectSummaries: SubjectSummary[];
 };
 
 type CachedSummaryPayload = {
@@ -176,6 +259,191 @@ const NotificationBanner = ({ message, onClose }: NotificationBannerProps) => (
 
 const formatPercent = (value: number) => `${Number(value.toFixed(2))}%`;
 
+const formatExamValue = (value: number, graded: boolean) =>
+  graded ? formatPercent(value) : "Not Graded";
+
+const getExamScore = (source: ExamScoreSource, examKey: ExamKey) => {
+  const rawMonthlyTests = source.monthlyTests;
+  const monthlyTests: [number, number, number, number] =
+    Array.isArray(rawMonthlyTests) && rawMonthlyTests.length === 4
+      ? [
+          Number(rawMonthlyTests[0] ?? 0),
+          Number(rawMonthlyTests[1] ?? 0),
+          Number(rawMonthlyTests[2] ?? 0),
+          Number(rawMonthlyTests[3] ?? 0),
+        ]
+      : [0, 0, 0, 0];
+
+  switch (examKey) {
+    case "monthlyTest1":
+      return monthlyTests[0];
+    case "monthlyTest2":
+      return monthlyTests[1];
+    case "monthlyTest3":
+      return monthlyTests[2];
+    case "monthlyTest4":
+      return monthlyTests[3];
+    case "midTerm":
+      return source.midTerm;
+    case "finalTerm":
+      return source.finalTerm;
+    default:
+      return 0;
+  }
+};
+
+const rankRowsByScore = (
+  rows: Array<Omit<ExamRankingRow, "rank">>,
+): ExamRankingRow[] => {
+  const sorted = [...rows].sort(
+    (a, b) => b.score - a.score || a.studentName.localeCompare(b.studentName),
+  );
+
+  let currentRank = 0;
+  let previousScore: number | null = null;
+
+  return sorted.map((row, index) => {
+    if (previousScore === null || row.score !== previousScore) {
+      currentRank = index + 1;
+      previousScore = row.score;
+    }
+
+    return {
+      ...row,
+      rank: currentRank,
+    };
+  });
+};
+
+const buildExamSummaries = (summary: ClassSummary): ExamSummaryData[] =>
+  EXAM_TABS.map((exam) => {
+    const rows = summary.studentRankings.map((student) => ({
+      studentId: student.studentId,
+      studentName: student.studentName,
+      email: student.email,
+      score: getExamScore(student, exam.key),
+      attendancePercent: student.attendancePercent,
+    }));
+
+    const graded = rows.some((row) => row.score > 0);
+
+    if (!graded || rows.length === 0) {
+      return {
+        key: exam.key,
+        label: exam.label,
+        graded: false,
+        average: 0,
+        passRate: 0,
+        rankings: [],
+        topStudents: [],
+      };
+    }
+
+    const rankings = rankRowsByScore(rows);
+    const totalScore = rows.reduce((sum, row) => sum + row.score, 0);
+    const average = Number((totalScore / rows.length).toFixed(2));
+    const passingStudents = rows.filter((row) => row.score >= 40).length;
+    const passRate = Number(((passingStudents / rows.length) * 100).toFixed(2));
+
+    return {
+      key: exam.key,
+      label: exam.label,
+      graded: true,
+      average,
+      passRate,
+      rankings,
+      topStudents: rankings.slice(0, 5),
+    };
+  });
+
+const buildExamStudentSubjectMatrices = (
+  summary: ClassSummary,
+  examSummaries: ExamSummaryData[],
+): ExamStudentSubjectMatrix[] => {
+  const subjects = summary.subjectSummaries.map((subject) => ({
+    subjectId: subject.subjectId,
+    subjectName: subject.subjectName,
+  }));
+
+  const studentsMap = new Map<
+    string,
+    { studentId: string; studentName: string; email: string }
+  >();
+
+  for (const student of summary.studentRankings) {
+    studentsMap.set(student.studentId, {
+      studentId: student.studentId,
+      studentName: student.studentName,
+      email: student.email,
+    });
+  }
+
+  for (const subject of summary.subjectSummaries) {
+    const studentMarks = subject.studentMarks ?? [];
+
+    for (const mark of studentMarks) {
+      if (!studentsMap.has(mark.studentId)) {
+        studentsMap.set(mark.studentId, {
+          studentId: mark.studentId,
+          studentName: mark.studentName,
+          email: mark.email,
+        });
+      }
+    }
+  }
+
+  const sortedStudents = [...studentsMap.values()].sort((a, b) =>
+    a.studentName.localeCompare(b.studentName),
+  );
+
+  const marksBySubjectAndStudent = new Map<string, Map<string, SubjectStudentMark>>();
+
+  for (const subject of summary.subjectSummaries) {
+    marksBySubjectAndStudent.set(
+      subject.subjectId,
+      new Map((subject.studentMarks ?? []).map((mark) => [mark.studentId, mark])),
+    );
+  }
+
+  const examSummaryByKey = new Map(
+    examSummaries.map((examSummary) => [examSummary.key, examSummary]),
+  );
+
+  return EXAM_TABS.map((exam) => {
+    const rows: ExamStudentSubjectRow[] = sortedStudents.map((student) => {
+      const marksBySubjectId: Record<string, number> = {};
+
+      for (const subject of summary.subjectSummaries) {
+        const studentMark = marksBySubjectAndStudent
+          .get(subject.subjectId)
+          ?.get(student.studentId);
+
+        marksBySubjectId[subject.subjectId] = studentMark
+          ? getExamScore(studentMark, exam.key)
+          : 0;
+      }
+
+      return {
+        studentId: student.studentId,
+        studentName: student.studentName,
+        email: student.email,
+        marksBySubjectId,
+      };
+    });
+
+    return {
+      key: exam.key,
+      label: exam.label,
+      graded: examSummaryByKey.get(exam.key)?.graded ?? false,
+      subjects,
+      rows,
+    };
+  });
+};
+
+const buildAttendanceRows = (students: StudentSummaryRow[]) =>
+  [...students].sort((a, b) => a.studentName.localeCompare(b.studentName));
+
 const escapeHtml = (value: string) =>
   value
     .replace(/&/g, "&amp;")
@@ -185,17 +453,69 @@ const escapeHtml = (value: string) =>
     .replace(/'/g, "&#39;");
 
 const buildSummaryPrintHtml = (summary: ClassSummary) => {
-  const studentRows = summary.studentRankings
+  const examSummaries = buildExamSummaries(summary);
+  const examSummaryByKey = new Map(
+    examSummaries.map((examSummary) => [examSummary.key, examSummary]),
+  );
+
+  const cardsHtml = examSummaries
+    .map(
+      (examSummary) => `
+        <div class="card">
+          <div class="card-title">${escapeHtml(examSummary.label)} Avg</div>
+          <div class="card-value">${formatExamValue(examSummary.average, examSummary.graded)}</div>
+        </div>`,
+    )
+    .join("");
+
+  const examRankingSections = examSummaries
+    .map((examSummary) => {
+      if (!examSummary.graded) {
+        return `
+      <section>
+        <h2>${escapeHtml(examSummary.label)} Ranking</h2>
+        <p class="meta">${escapeHtml(examSummary.label)} is not graded yet.</p>
+      </section>`;
+      }
+
+      const examRows = examSummary.rankings
+        .map(
+          (student) => `
+            <tr>
+              <td>#${student.rank}</td>
+              <td>${escapeHtml(student.studentName)}</td>
+              <td>${escapeHtml(student.email)}</td>
+              <td>${formatPercent(student.score)}</td>
+            </tr>`,
+        )
+        .join("");
+
+      return `
+      <section>
+        <h2>${escapeHtml(examSummary.label)} Ranking</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Student</th>
+              <th>Email</th>
+              <th>${escapeHtml(examSummary.label)} Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${examRows || '<tr><td colspan="4">No students found.</td></tr>'}
+          </tbody>
+        </table>
+      </section>`;
+    })
+    .join("");
+
+  const attendanceRows = buildAttendanceRows(summary.studentRankings)
     .map(
       (student) => `
         <tr>
-          <td>${student.rank}</td>
           <td>${escapeHtml(student.studentName)}</td>
           <td>${escapeHtml(student.email)}</td>
-          <td>${formatPercent(student.monthlyAverage)}</td>
-          <td>${formatPercent(student.midTerm)}</td>
-          <td>${formatPercent(student.finalTerm)}</td>
-          <td>${formatPercent(student.overallPercent)}</td>
           <td>${formatPercent(student.attendancePercent)}</td>
         </tr>`,
     )
@@ -216,12 +536,12 @@ const buildSummaryPrintHtml = (summary: ClassSummary) => {
       return `
         <tr>
           <td>${escapeHtml(subject.subjectName)}</td>
-          <td>${formatPercent(subject.monthlyTests[0])}</td>
-          <td>${formatPercent(subject.monthlyTests[1])}</td>
-          <td>${formatPercent(subject.monthlyTests[2])}</td>
-          <td>${formatPercent(subject.monthlyTests[3])}</td>
-          <td>${formatPercent(subject.midTerm)}</td>
-          <td>${formatPercent(subject.finalTerm)}</td>
+          <td>${formatExamValue(subject.monthlyTests[0], examSummaryByKey.get("monthlyTest1")?.graded ?? false)}</td>
+          <td>${formatExamValue(subject.monthlyTests[1], examSummaryByKey.get("monthlyTest2")?.graded ?? false)}</td>
+          <td>${formatExamValue(subject.monthlyTests[2], examSummaryByKey.get("monthlyTest3")?.graded ?? false)}</td>
+          <td>${formatExamValue(subject.monthlyTests[3], examSummaryByKey.get("monthlyTest4")?.graded ?? false)}</td>
+          <td>${formatExamValue(subject.midTerm, examSummaryByKey.get("midTerm")?.graded ?? false)}</td>
+          <td>${formatExamValue(subject.finalTerm, examSummaryByKey.get("finalTerm")?.graded ?? false)}</td>
           <td>${formatPercent(subject.overallPercent)}</td>
           <td>${topStudentsLabel}</td>
         </tr>`;
@@ -303,34 +623,24 @@ const buildSummaryPrintHtml = (summary: ClassSummary) => {
     <p class="meta">Generated: ${new Date(summary.generatedAt).toLocaleString()}</p>
 
     <div class="cards">
-      <div class="card"><div class="card-title">MT 1 Avg</div><div class="card-value">${formatPercent(summary.classAverages.monthlyTests[0])}</div></div>
-      <div class="card"><div class="card-title">MT 2 Avg</div><div class="card-value">${formatPercent(summary.classAverages.monthlyTests[1])}</div></div>
-      <div class="card"><div class="card-title">MT 3 Avg</div><div class="card-value">${formatPercent(summary.classAverages.monthlyTests[2])}</div></div>
-      <div class="card"><div class="card-title">MT 4 Avg</div><div class="card-value">${formatPercent(summary.classAverages.monthlyTests[3])}</div></div>
-      <div class="card"><div class="card-title">Mid-term Avg</div><div class="card-value">${formatPercent(summary.classAverages.midTerm)}</div></div>
-      <div class="card"><div class="card-title">Final-term Avg</div><div class="card-value">${formatPercent(summary.classAverages.finalTerm)}</div></div>
-      <div class="card"><div class="card-title">Overall Avg</div><div class="card-value">${formatPercent(summary.classAverages.overallPercent)}</div></div>
+      ${cardsHtml}
       <div class="card"><div class="card-title">Attendance Avg</div><div class="card-value">${formatPercent(summary.classAverages.attendancePercent)}</div></div>
-      <div class="card"><div class="card-title">Pass Rate</div><div class="card-value">${formatPercent(summary.classAverages.passRate)}</div></div>
     </div>
 
+    ${examRankingSections}
+
     <section>
-      <h2>Class Ranking</h2>
+      <h2>Class Attendance</h2>
       <table>
         <thead>
           <tr>
-            <th>Rank</th>
             <th>Student</th>
             <th>Email</th>
-            <th>MT Avg</th>
-            <th>Mid</th>
-            <th>Final</th>
-            <th>Overall</th>
             <th>Attendance</th>
           </tr>
         </thead>
         <tbody>
-          ${studentRows || '<tr><td colspan="8">No students found.</td></tr>'}
+          ${attendanceRows || '<tr><td colspan="3">No students found.</td></tr>'}
         </tbody>
       </table>
     </section>
@@ -366,195 +676,310 @@ type ClassSummaryCardProps = {
   onDownloadPdf: () => void;
 };
 
-const ClassSummaryCard = ({ summary, onPrint, onDownloadPdf }: ClassSummaryCardProps) => (
-  <div className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5 text-[#632567]">
-    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <div>
-        <h2 className="text-2xl font-semibold">{summary.className} Summary</h2>
-        <p className="mt-1 text-sm text-[#632567]/80">
-          Teacher: {summary.teacherName || "Not assigned"} | Students: {summary.studentsCount}
+const ClassSummaryCard = ({ summary, onPrint, onDownloadPdf }: ClassSummaryCardProps) => {
+  const examSummaries = useMemo(() => buildExamSummaries(summary), [summary]);
+  const examSubjectMatrices = useMemo(
+    () => buildExamStudentSubjectMatrices(summary, examSummaries),
+    [summary, examSummaries],
+  );
+  const [selectedExamKey, setSelectedExamKey] = useState<ExamKey>("monthlyTest1");
+
+  const selectedExam =
+    examSummaries.find((examSummary) => examSummary.key === selectedExamKey) ??
+    examSummaries[0];
+  const attendanceRows = useMemo(
+    () => buildAttendanceRows(summary.studentRankings),
+    [summary.studentRankings],
+  );
+
+  return (
+    <div className="mt-6 rounded-xl border border-[#632567]/40 bg-white p-5 text-[#632567]">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-2xl font-semibold">{summary.className} Summary</h2>
+          <p className="mt-1 text-sm text-[#632567]/80">
+            Teacher: {summary.teacherName || "Not assigned"} | Students: {summary.studentsCount}
+          </p>
+          <p className="mt-1 text-sm text-[#632567]/80">
+            Generated: {new Date(summary.generatedAt).toLocaleString()}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onDownloadPdf}
+            className="rounded-lg bg-[#632567] px-4 py-2 text-sm font-medium text-white hover:bg-[#522053]"
+          >
+            Download PDF
+          </button>
+          <button
+            type="button"
+            onClick={onPrint}
+            className="rounded-lg border border-[#632567]/50 px-4 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
+          >
+            Print summary
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {examSummaries.map((examSummary) => (
+          <div
+            key={`${summary.classId}-${examSummary.key}-avg`}
+            className="rounded-lg border border-[#632567]/20 p-3"
+          >
+            <p className="text-xs uppercase tracking-wide text-[#632567]/70">
+              {examSummary.label} Avg
+            </p>
+            <p className="mt-1 text-xl font-semibold">
+              {formatExamValue(examSummary.average, examSummary.graded)}
+            </p>
+          </div>
+        ))}
+        <div className="rounded-lg border border-[#632567]/20 p-3">
+          <p className="text-xs uppercase tracking-wide text-[#632567]/70">Attendance Avg</p>
+          <p className="mt-1 text-xl font-semibold">
+            {formatPercent(summary.classAverages.attendancePercent)}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
+        <h3 className="text-sm font-semibold">Exam Tabs</h3>
+        <p className="mt-1 text-sm text-[#632567]/85">
+          Rankings are calculated separately for each exam.
         </p>
-        <p className="mt-1 text-sm text-[#632567]/80">
-          Generated: {new Date(summary.generatedAt).toLocaleString()}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {examSummaries.map((examSummary) => {
+            const isActive = examSummary.key === selectedExamKey;
+
+            return (
+              <button
+                key={`${summary.classId}-${examSummary.key}-tab`}
+                type="button"
+                onClick={() => setSelectedExamKey(examSummary.key)}
+                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+                  isActive
+                    ? "border-[#632567] bg-[#632567] text-white"
+                    : "border-[#632567]/40 text-[#632567] hover:bg-[#632567]/10"
+                }`}
+              >
+                {examSummary.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
+        <h3 className="text-sm font-semibold">
+          Top Ranked Students {selectedExam ? `- ${selectedExam.label}` : ""}
+        </h3>
+        {!selectedExam || !selectedExam.graded ? (
+          <p className="mt-2 text-sm text-[#632567]/85">
+            {selectedExam?.label ?? "This exam"} is not graded yet.
+          </p>
+        ) : selectedExam.topStudents.length === 0 ? (
+          <p className="mt-2 text-sm text-[#632567]/85">No students found in this class.</p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[720px] border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-[#632567]/80">
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Rank</th>
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Student</th>
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Email</th>
+                  <th className="border-b border-[#632567]/25 px-2 py-2">
+                    {selectedExam.label} Score
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedExam.topStudents.map((student) => (
+                  <tr
+                    key={`${summary.classId}-${selectedExam.key}-${student.studentId}-top`}
+                  >
+                    <td className="border-b border-[#632567]/15 px-2 py-2">#{student.rank}</td>
+                    <td className="border-b border-[#632567]/15 px-2 py-2 font-medium">
+                      {student.studentName}
+                    </td>
+                    <td className="border-b border-[#632567]/15 px-2 py-2">{student.email}</td>
+                    <td className="border-b border-[#632567]/15 px-2 py-2">
+                      {formatPercent(student.score)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
+        <h3 className="text-sm font-semibold">
+          Full Class Ranking {selectedExam ? `- ${selectedExam.label}` : ""}
+        </h3>
+        {!selectedExam || !selectedExam.graded ? (
+          <p className="mt-2 text-sm text-[#632567]/85">
+            {selectedExam?.label ?? "This exam"} is not graded yet.
+          </p>
+        ) : selectedExam.rankings.length === 0 ? (
+          <p className="mt-2 text-sm text-[#632567]/85">No ranking data found.</p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[760px] border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-[#632567]/80">
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Rank</th>
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Student</th>
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Email</th>
+                  <th className="border-b border-[#632567]/25 px-2 py-2">
+                    {selectedExam.label} Score
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedExam.rankings.map((student) => (
+                  <tr key={`${summary.classId}-${selectedExam.key}-${student.studentId}-rank`}>
+                    <td className="border-b border-[#632567]/15 px-2 py-2">#{student.rank}</td>
+                    <td className="border-b border-[#632567]/15 px-2 py-2 font-medium">
+                      {student.studentName}
+                    </td>
+                    <td className="border-b border-[#632567]/15 px-2 py-2">{student.email}</td>
+                    <td className="border-b border-[#632567]/15 px-2 py-2 font-semibold">
+                      {formatPercent(student.score)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
+        <h3 className="text-sm font-semibold">Class Attendance</h3>
+        {attendanceRows.length === 0 ? (
+          <p className="mt-2 text-sm text-[#632567]/85">No students found in this class.</p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[700px] border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-[#632567]/80">
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Student</th>
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Email</th>
+                  <th className="border-b border-[#632567]/25 px-2 py-2">Attendance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {attendanceRows.map((student) => (
+                  <tr key={`${summary.classId}-${student.studentId}-attendance`}>
+                    <td className="border-b border-[#632567]/15 px-2 py-2 font-medium">
+                      {student.studentName}
+                    </td>
+                    <td className="border-b border-[#632567]/15 px-2 py-2">{student.email}</td>
+                    <td className="border-b border-[#632567]/15 px-2 py-2">
+                      {formatPercent(student.attendancePercent)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
+        <h3 className="text-sm font-semibold">Subject-wise Class Marks</h3>
+        <p className="mt-1 text-sm text-[#632567]/85">
+          Expand an exam to view all students with subject-wise marks.
         </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onDownloadPdf}
-          className="rounded-lg bg-[#632567] px-4 py-2 text-sm font-medium text-white hover:bg-[#522053]"
-        >
-          Download PDF
-        </button>
-        <button
-          type="button"
-          onClick={onPrint}
-          className="rounded-lg border border-[#632567]/50 px-4 py-2 text-sm font-medium text-[#632567] hover:bg-[#632567] hover:text-white"
-        >
-          Print summary
-        </button>
-      </div>
-    </div>
+        {summary.subjectSummaries.length === 0 ? (
+          <p className="mt-2 text-sm text-[#632567]/85">No subjects found for this class.</p>
+        ) : (
+          <div className="mt-3 space-y-3">
+            {examSubjectMatrices.map((examMatrix) => {
+              const examGraded = examMatrix.graded;
 
-    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">MT 1 Avg</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.monthlyTests[0])}</p>
-      </div>
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">MT 2 Avg</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.monthlyTests[1])}</p>
-      </div>
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">MT 3 Avg</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.monthlyTests[2])}</p>
-      </div>
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">MT 4 Avg</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.monthlyTests[3])}</p>
-      </div>
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Mid-term Avg</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.midTerm)}</p>
-      </div>
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Final-term Avg</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.finalTerm)}</p>
-      </div>
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Overall Avg</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.overallPercent)}</p>
-      </div>
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Attendance Avg</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.attendancePercent)}</p>
-      </div>
-      <div className="rounded-lg border border-[#632567]/20 p-3">
-        <p className="text-xs uppercase tracking-wide text-[#632567]/70">Pass Rate</p>
-        <p className="mt-1 text-xl font-semibold">{formatPercent(summary.classAverages.passRate)}</p>
-      </div>
-    </div>
+              return (
+                <details
+                  key={`${summary.classId}-${examMatrix.key}-subjects`}
+                  className="rounded-md border border-[#632567]/20"
+                >
+                  <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm font-semibold text-[#632567]">
+                    <span>{examMatrix.label}</span>
+                    <span className="text-xs font-medium text-[#632567]/75">
+                      {examGraded
+                        ? `${examMatrix.subjects.length} subject${examMatrix.subjects.length === 1 ? "" : "s"}`
+                        : "Not Graded"}
+                    </span>
+                  </summary>
 
-    <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
-      <h3 className="text-sm font-semibold">Top Ranked Students</h3>
-      {summary.topStudents.length === 0 ? (
-        <p className="mt-2 text-sm text-[#632567]/85">No students found in this class.</p>
-      ) : (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-sm">
-            <thead>
-              <tr className="text-left text-[#632567]/80">
-                <th className="border-b border-[#632567]/25 px-2 py-2">Rank</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Student</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Email</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Overall</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Attendance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.topStudents.map((student) => (
-                <tr key={`${summary.classId}-${student.studentId}-top`}>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">#{student.rank}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2 font-medium">{student.studentName}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{student.email}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(student.overallPercent)}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(student.attendancePercent)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                  <div className="border-t border-[#632567]/15 p-3">
+                    {!examGraded ? (
+                      <p className="text-sm text-[#632567]/80">
+                        {examMatrix.label} is not graded yet.
+                      </p>
+                    ) : examMatrix.subjects.length === 0 ? (
+                      <p className="text-sm text-[#632567]/80">
+                        No subjects found for this class.
+                      </p>
+                    ) : examMatrix.rows.length === 0 ? (
+                      <p className="text-sm text-[#632567]/80">
+                        No students found for this class.
+                      </p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[780px] border-collapse text-sm">
+                          <thead>
+                            <tr className="text-left text-[#632567]/80">
+                              <th className="border-b border-[#632567]/25 px-2 py-2">
+                                Name
+                              </th>
+                              {examMatrix.subjects.map((subject) => (
+                                <th
+                                  key={`${summary.classId}-${examMatrix.key}-${subject.subjectId}-head`}
+                                  className="border-b border-[#632567]/25 px-2 py-2"
+                                >
+                                  {subject.subjectName}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {examMatrix.rows.map((studentRow) => (
+                              <tr
+                                key={`${summary.classId}-${examMatrix.key}-${studentRow.studentId}`}
+                              >
+                                <td className="border-b border-[#632567]/15 px-2 py-2 font-medium">
+                                  {studentRow.studentName}
+                                </td>
+                                {examMatrix.subjects.map((subject) => (
+                                  <td
+                                    key={`${summary.classId}-${examMatrix.key}-${studentRow.studentId}-${subject.subjectId}`}
+                                    className="border-b border-[#632567]/15 px-2 py-2"
+                                  >
+                                    {formatPercent(
+                                      studentRow.marksBySubjectId[subject.subjectId] ?? 0,
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
-
-    <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
-      <h3 className="text-sm font-semibold">Full Class Ranking</h3>
-      {summary.studentRankings.length === 0 ? (
-        <p className="mt-2 text-sm text-[#632567]/85">No ranking data found.</p>
-      ) : (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[960px] border-collapse text-sm">
-            <thead>
-              <tr className="text-left text-[#632567]/80">
-                <th className="border-b border-[#632567]/25 px-2 py-2">Rank</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Student</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Email</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">MT Avg</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Mid</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Final</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Overall</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Attendance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.studentRankings.map((student) => (
-                <tr key={`${summary.classId}-${student.studentId}-rank`}>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">#{student.rank}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2 font-medium">{student.studentName}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{student.email}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(student.monthlyAverage)}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(student.midTerm)}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(student.finalTerm)}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2 font-semibold">{formatPercent(student.overallPercent)}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(student.attendancePercent)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-
-    <div className="mt-4 rounded-lg border border-[#632567]/20 p-3">
-      <h3 className="text-sm font-semibold">Subject-wise Class Marks</h3>
-      {summary.subjectSummaries.length === 0 ? (
-        <p className="mt-2 text-sm text-[#632567]/85">No subjects found for this class.</p>
-      ) : (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[1020px] border-collapse text-sm">
-            <thead>
-              <tr className="text-left text-[#632567]/80">
-                <th className="border-b border-[#632567]/25 px-2 py-2">Subject</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">MT 1</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">MT 2</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">MT 3</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">MT 4</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Mid</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Final</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Overall</th>
-                <th className="border-b border-[#632567]/25 px-2 py-2">Top Ranked</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.subjectSummaries.map((subject) => (
-                <tr key={`${summary.classId}-${subject.subjectId}`}>
-                  <td className="border-b border-[#632567]/15 px-2 py-2 font-medium">{subject.subjectName}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(subject.monthlyTests[0])}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(subject.monthlyTests[1])}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(subject.monthlyTests[2])}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(subject.monthlyTests[3])}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(subject.midTerm)}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2">{formatPercent(subject.finalTerm)}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2 font-semibold">{formatPercent(subject.overallPercent)}</td>
-                  <td className="border-b border-[#632567]/15 px-2 py-2 text-xs">
-                    {subject.topStudents.length === 0
-                      ? "No ranking data"
-                      : subject.topStudents
-                          .map(
-                            (student) =>
-                              `#${student.rank} ${student.studentName} (${formatPercent(student.overallPercent)})`,
-                          )
-                          .join(", ")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  </div>
-);
+  );
+};
 
 const SummaryPageFallback = () => (
   <div className="min-h-screen bg-[#632567] text-white grid place-items-center px-6">
@@ -792,179 +1217,251 @@ function SummaryPageContent() {
       });
 
       const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
       const marginLeft = 36;
       const marginRight = 36;
-      let currentY = 40;
+      const readBlobAsDataUrl = (blob: Blob) =>
+        new Promise<string | null>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            resolve(typeof reader.result === "string" ? reader.result : null);
+          };
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(blob);
+        });
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(18);
-      doc.setTextColor(64, 25, 67);
-      doc.text(`${summaryData.className} - Class Summary`, marginLeft, currentY, {
-        maxWidth: pageWidth - marginLeft - marginRight,
-      });
+      const loadReportLogo = async () => {
+        try {
+          const response = await fetch("/rlcc_logo.jpg");
+          if (!response.ok) {
+            return null;
+          }
 
-      currentY += 22;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(11);
-      doc.setTextColor(71, 85, 105);
-      doc.text(
-        `Teacher: ${summaryData.teacherName || "Not assigned"} | Students: ${summaryData.studentsCount}`,
-        marginLeft,
-        currentY,
-      );
+          const blob = await response.blob();
+          return await readBlobAsDataUrl(blob);
+        } catch {
+          return null;
+        }
+      };
 
-      currentY += 16;
-      doc.text(
-        `Generated: ${new Date(summaryData.generatedAt).toLocaleString()}`,
-        marginLeft,
-        currentY,
-      );
+      const logoDataUrl = await loadReportLogo();
 
-      currentY += 18;
+      const getLastAutoTableY = () =>
+        (
+          doc as unknown as {
+            lastAutoTable?: {
+              finalY: number;
+            };
+          }
+        ).lastAutoTable?.finalY ?? 0;
+
+      const drawSectionHeader = (sectionTitle: string) => {
+        const headerTop = 32;
+        const logoWidth = 64;
+        const logoHeight = 64;
+        const textStartX = logoDataUrl ? marginLeft + logoWidth + 14 : marginLeft;
+        const textMaxWidth = pageWidth - marginRight - textStartX;
+
+        if (logoDataUrl) {
+          doc.addImage(logoDataUrl, "JPEG", marginLeft, headerTop, logoWidth, logoHeight);
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(20);
+        doc.setTextColor(64, 25, 67);
+        doc.text(summaryData.className, textStartX, headerTop + 20, {
+          maxWidth: textMaxWidth,
+        });
+
+        doc.setFontSize(14);
+        doc.text(
+          `Teacher: ${summaryData.teacherName || "Not assigned"}`,
+          textStartX,
+          headerTop + 42,
+          {
+            maxWidth: textMaxWidth,
+          },
+        );
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10.5);
+        doc.setTextColor(71, 85, 105);
+        doc.text(
+          `Students: ${summaryData.studentsCount} | Generated: ${new Date(summaryData.generatedAt).toLocaleString()}`,
+          textStartX,
+          headerTop + 60,
+          {
+            maxWidth: textMaxWidth,
+          },
+        );
+
+        const separatorY = headerTop + 78;
+        doc.setDrawColor(198, 170, 201);
+        doc.setLineWidth(1);
+        doc.line(marginLeft, separatorY, pageWidth - marginRight, separatorY);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(14);
+        doc.setTextColor(64, 25, 67);
+        const sectionTitleY = separatorY + 22;
+        doc.text(sectionTitle, marginLeft, sectionTitleY);
+
+        // Keep enough vertical gap before the first table/heading on each section page.
+        return sectionTitleY + 30;
+      };
+
+      const examSummaries = buildExamSummaries(summaryData);
+      const attendanceRows = buildAttendanceRows(summaryData.studentRankings);
+
+      const rankingExamKeys: ExamKey[] = [
+        "monthlyTest1",
+        "monthlyTest2",
+        "monthlyTest3",
+        "monthlyTest4",
+        "midTerm",
+      ];
+      const rankingExamSummaries = rankingExamKeys
+        .map((key) => examSummaries.find((examSummary) => examSummary.key === key))
+        .filter((examSummary): examSummary is ExamSummaryData => Boolean(examSummary));
+
+      let currentY = drawSectionHeader("1) Averages Of All Exams");
       autoTable(doc, {
         startY: currentY,
         margin: { left: marginLeft, right: marginRight },
-        head: [["Metric", "Value"]],
-        body: [
-          ["MT 1 Avg", formatPercent(summaryData.classAverages.monthlyTests[0])],
-          ["MT 2 Avg", formatPercent(summaryData.classAverages.monthlyTests[1])],
-          ["MT 3 Avg", formatPercent(summaryData.classAverages.monthlyTests[2])],
-          ["MT 4 Avg", formatPercent(summaryData.classAverages.monthlyTests[3])],
-          ["Mid-term Avg", formatPercent(summaryData.classAverages.midTerm)],
-          ["Final-term Avg", formatPercent(summaryData.classAverages.finalTerm)],
-          ["Overall Avg", formatPercent(summaryData.classAverages.overallPercent)],
-          ["Attendance Avg", formatPercent(summaryData.classAverages.attendancePercent)],
-          ["Pass Rate", formatPercent(summaryData.classAverages.passRate)],
-        ],
+        head: [["Exam", "Average"]],
+        body: examSummaries.map((examSummary) => [
+          examSummary.label,
+          formatExamValue(examSummary.average, examSummary.graded),
+        ]),
         styles: { fontSize: 10, cellPadding: 5 },
         headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
         theme: "grid",
       });
 
-      currentY =
-        (
-          doc as unknown as {
-            lastAutoTable?: {
-              finalY: number;
-            };
-          }
-        ).lastAutoTable?.finalY ??
-        currentY + 80;
-
-      currentY += 20;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(13);
-      doc.setTextColor(64, 25, 67);
-      doc.text("Top Ranked Students", marginLeft, currentY);
-
-      currentY += 8;
+      doc.addPage();
+      currentY = drawSectionHeader("2) Class Attendance");
       autoTable(doc, {
         startY: currentY,
         margin: { left: marginLeft, right: marginRight },
-        head: [["Rank", "Student", "Email", "Overall", "Attendance"]],
+        head: [["Student", "Email", "Attendance"]],
         body:
-          summaryData.topStudents.length > 0
-            ? summaryData.topStudents.map((student) => [
-                `#${student.rank}`,
+          attendanceRows.length > 0
+            ? attendanceRows.map((student) => [
                 student.studentName,
                 student.email,
-                formatPercent(student.overallPercent),
                 formatPercent(student.attendancePercent),
               ])
-            : [["-", "No students found", "", "", ""]],
-        styles: { fontSize: 9.5, cellPadding: 4 },
-        headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
-        theme: "grid",
-      });
-
-      currentY =
-        (
-          doc as unknown as {
-            lastAutoTable?: {
-              finalY: number;
-            };
-          }
-        ).lastAutoTable?.finalY ??
-        currentY + 80;
-
-      currentY += 20;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(13);
-      doc.setTextColor(64, 25, 67);
-      doc.text("Full Class Ranking", marginLeft, currentY);
-
-      currentY += 8;
-      autoTable(doc, {
-        startY: currentY,
-        margin: { left: marginLeft, right: marginRight },
-        head: [["Rank", "Student", "Email", "MT Avg", "Mid", "Final", "Overall", "Attendance"]],
-        body:
-          summaryData.studentRankings.length > 0
-            ? summaryData.studentRankings.map((student) => [
-                `#${student.rank}`,
-                student.studentName,
-                student.email,
-                formatPercent(student.monthlyAverage),
-                formatPercent(student.midTerm),
-                formatPercent(student.finalTerm),
-                formatPercent(student.overallPercent),
-                formatPercent(student.attendancePercent),
-              ])
-            : [["-", "No ranking data", "", "", "", "", "", ""]],
+            : [["No students found", "", ""]],
         styles: { fontSize: 9, cellPadding: 4 },
         headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
         theme: "grid",
       });
 
-      currentY =
-        (
-          doc as unknown as {
-            lastAutoTable?: {
-              finalY: number;
-            };
+      const rankingSectionTitle = "3) 5 Exam Rankings";
+      doc.addPage();
+      currentY = drawSectionHeader(rankingSectionTitle);
+
+      for (const examSummary of rankingExamSummaries) {
+        if (currentY > pageHeight - 150) {
+          doc.addPage();
+          currentY = drawSectionHeader(`${rankingSectionTitle} (continued)`);
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12.5);
+        doc.setTextColor(64, 25, 67);
+        doc.text(`${examSummary.label} Ranking`, marginLeft, currentY);
+
+        currentY += 8;
+        if (!examSummary.graded) {
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(10);
+          doc.setTextColor(71, 85, 105);
+          doc.text(`${examSummary.label} is not graded yet.`, marginLeft, currentY + 12);
+          currentY += 26;
+          continue;
+        }
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: marginLeft, right: marginRight },
+          head: [["Rank", "Student", `${examSummary.label} Score`]],
+          body: examSummary.rankings.map((student) => [
+            `#${student.rank}`,
+            student.studentName,
+            formatPercent(student.score),
+          ]),
+          styles: { fontSize: 9, cellPadding: 4 },
+          headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
+          columnStyles: {
+            0: { cellWidth: 80 },
+            1: { cellWidth: 260 },
+          },
+          theme: "grid",
+        });
+
+        currentY = getLastAutoTableY() + 18;
+      }
+
+      const examSubjectMatrices = buildExamStudentSubjectMatrices(
+        summaryData,
+        examSummaries,
+      );
+      const gradedExamMatrices = examSubjectMatrices.filter((examMatrix) => examMatrix.graded);
+
+      doc.addPage();
+      currentY = drawSectionHeader("4) Subject Wise Ranking");
+
+      if (gradedExamMatrices.length === 0) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.setTextColor(71, 85, 105);
+        doc.text("No graded terms available for subject-wise marks.", marginLeft, currentY + 14);
+      } else {
+        const subjectSectionTitle = "4) Subject Wise Ranking";
+
+        for (const examMatrix of gradedExamMatrices) {
+          if (currentY > pageHeight - 170) {
+            doc.addPage();
+            currentY = drawSectionHeader(`${subjectSectionTitle} (continued)`);
           }
-        ).lastAutoTable?.finalY ??
-        currentY + 80;
 
-      currentY += 20;
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(13);
-      doc.setTextColor(64, 25, 67);
-      doc.text("Subject-wise Class Summary", marginLeft, currentY);
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(12.5);
+          doc.setTextColor(64, 25, 67);
+          doc.text(examMatrix.label, marginLeft, currentY);
+          currentY += 8;
 
-      currentY += 8;
-      autoTable(doc, {
-        startY: currentY,
-        margin: { left: marginLeft, right: marginRight },
-        head: [["Subject", "MT 1", "MT 2", "MT 3", "MT 4", "Mid", "Final", "Overall", "Top Ranked"]],
-        body:
-          summaryData.subjectSummaries.length > 0
-            ? summaryData.subjectSummaries.map((subject) => [
-                subject.subjectName,
-                formatPercent(subject.monthlyTests[0]),
-                formatPercent(subject.monthlyTests[1]),
-                formatPercent(subject.monthlyTests[2]),
-                formatPercent(subject.monthlyTests[3]),
-                formatPercent(subject.midTerm),
-                formatPercent(subject.finalTerm),
-                formatPercent(subject.overallPercent),
-                subject.topStudents.length === 0
-                  ? "No ranking data"
-                  : subject.topStudents
-                      .map(
-                        (student) =>
-                          `#${student.rank} ${student.studentName} (${formatPercent(student.overallPercent)})`,
-                      )
-                      .join(", "),
-              ])
-            : [["No subjects found", "", "", "", "", "", "", "", ""]],
-        styles: { fontSize: 8.5, cellPadding: 4 },
-        headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
-        columnStyles: {
-          8: { cellWidth: 220 },
-        },
-        theme: "grid",
-      });
+          if (examMatrix.subjects.length === 0 || examMatrix.rows.length === 0) {
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(10);
+            doc.setTextColor(71, 85, 105);
+            doc.text("No student/subject marks found.", marginLeft, currentY + 12);
+            currentY += 26;
+            continue;
+          }
+
+          autoTable(doc, {
+            startY: currentY,
+            margin: { left: marginLeft, right: marginRight },
+            head: [["Name", ...examMatrix.subjects.map((subject) => subject.subjectName)]],
+            body: examMatrix.rows.map((studentRow) => [
+              studentRow.studentName,
+              ...examMatrix.subjects.map((subject) =>
+                formatPercent(studentRow.marksBySubjectId[subject.subjectId] ?? 0),
+              ),
+            ]),
+            styles: { fontSize: 8.5, cellPadding: 3.5 },
+            headStyles: { fillColor: [99, 37, 103], textColor: [255, 255, 255] },
+            columnStyles: {
+              0: { cellWidth: 150 },
+            },
+            theme: "grid",
+          });
+
+          currentY = getLastAutoTableY() + 18;
+        }
+      }
 
       const normalizedClassName = summaryData.className
         .toLowerCase()
